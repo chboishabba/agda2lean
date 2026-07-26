@@ -103,7 +103,11 @@ closeCatalog = close . catalogConnection
 configure :: Connection -> IO ()
 configure connection = do
   execute_ connection "PRAGMA foreign_keys = ON"
-  execute_ connection "PRAGMA journal_mode = WAL"
+  journalModes <-
+    query_ connection "PRAGMA journal_mode = WAL" :: IO [Only Text]
+  unless
+    (journalModes == [Only "wal"])
+    (throwIO (userError "SQLite refused WAL journal mode"))
   execute_ connection "PRAGMA synchronous = NORMAL"
   execute_ connection "PRAGMA temp_store = MEMORY"
   execute_ connection "PRAGMA busy_timeout = 5000"
@@ -174,10 +178,9 @@ migrate connection = withTransaction connection $ do
     "INSERT OR IGNORE INTO catalog_meta(key, value) VALUES ('codec_version', ?)"
     (Only (Text.pack (show codecVersion)))
   schemaVersions <-
-    query
+    query_
       connection
       "SELECT value FROM catalog_meta WHERE key = 'schema_version'"
-      ()
   unless
     (schemaVersions == [Only ("1" :: Text)])
     (throwIO (userError "unsupported SQLite catalog schema"))
