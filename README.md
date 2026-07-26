@@ -50,3 +50,8 @@ non-canonical or trailing input cannot acquire an authoritative object hash.
 
 See [PLANNING.md](PLANNING.md), [ROADMAP.md](ROADMAP.md), and
 [ADR 0001](docs/adr/0001-storage-and-canonical-encoding.md).
+
+Please see
+https://github.com/lyphyser/lean2agda
+https://github.com/agda/agda
+https://github.com/leanprover/lean4
