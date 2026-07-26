@@ -1,7 +1,5 @@
-PRAGMA foreign_keys = ON;
-PRAGMA journal_mode = WAL;
-PRAGMA synchronous = NORMAL;
-PRAGMA temp_store = MEMORY;
+-- Authoritative catalog DDL. Embedded and executed by Agda2Lean.Catalog.
+-- Runtime PRAGMAs are applied separately before migration.
 
 CREATE TABLE IF NOT EXISTS catalog_meta (
     key TEXT PRIMARY KEY,
@@ -26,11 +24,28 @@ CREATE TABLE IF NOT EXISTS module_heads (
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS declarations (
+    -- Canonical names are globally unique and validation requires each name
+    -- to be nested under its owning module's canonical namespace.
     declaration_name TEXT PRIMARY KEY,
     module_name TEXT NOT NULL REFERENCES module_heads(module_name)
         ON DELETE CASCADE,
-    role TEXT NOT NULL,
-    mapping_mode TEXT NOT NULL,
+    role TEXT NOT NULL CHECK (role IN (
+        'computational-data',
+        'computational-function',
+        'computational-witness',
+        'logical-proposition',
+        'theorem',
+        'axiom',
+        'certificate',
+        'adapter'
+    )),
+    mapping_mode TEXT NOT NULL CHECK (mapping_mode IN (
+        'exact',
+        'encoded',
+        'reconstruct',
+        'quarantined',
+        'unsupported'
+    )),
     type_term_id INTEGER NOT NULL,
     body_term_id INTEGER,
     source_file TEXT NOT NULL,

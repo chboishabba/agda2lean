@@ -47,7 +47,7 @@ exampleModule =
     , moduleDeclarations =
         Vector.singleton
           CoreDeclaration
-            { declarationName = CanonicalName "DASHI.Example.identity"
+            { declarationName = CanonicalName "DASHI.Example.Identity.identity"
             , declarationRole = ComputationalFunction
             , declarationUniverses = Vector.empty
             , declarationModuleParameters = Vector.empty
@@ -71,9 +71,12 @@ exampleModuleReordered :: ModuleIR
 exampleModuleReordered =
   exampleModule
     { moduleTerms =
-        Map.fromList
+        foldr
+          (uncurry Map.insert)
+          Map.empty
           [ (TermId 3, moduleTerms exampleModule Map.! TermId 3)
           , (TermId 1, moduleTerms exampleModule Map.! TermId 1)
+          , (TermId 4, moduleTerms exampleModule Map.! TermId 4)
           , (TermId 0, moduleTerms exampleModule Map.! TermId 0)
           , (TermId 2, moduleTerms exampleModule Map.! TermId 2)
           ]

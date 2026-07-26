@@ -49,6 +49,13 @@ runtime hash map.
 - Direct dependencies are indexed; transitive closures are computed rather
   than copied into every receipt.
 - The CLI reads module bodies only for commands that need them.
+- Catalog verification folds over SQLite rows, retaining only the current CBOR
+  blob and accumulated issues rather than materialising every object.
+- CBOR collection lengths are bounded before allocation.
+- `schema/catalog.sql` is embedded at compile time and is the single
+  authoritative DDL source.
+- Catalog opening checks SQLite >= 3.37, catalog schema version 2, and canonical
+  CBOR codec version 2 before accepting data.
 
 If profiling later shows that large blobs should live outside SQLite, the
 content-addressed object interface permits moving CBOR bytes to a packed object

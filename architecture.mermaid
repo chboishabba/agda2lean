@@ -2,8 +2,9 @@ flowchart TD
     subgraph Source["Source and extraction"]
         AS["Agda source"]
         AE["Agda elaborator"]
-        EX["Haskell extractor"]
-        AS --> AE --> EX
+        AB["Pinned Agda backend"]
+        EX["Snapshot normalizer"]
+        AS --> AE --> AB --> EX
     end
 
     subgraph Core["DASHI Core IR"]

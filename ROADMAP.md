@@ -16,6 +16,25 @@ JSON is not used as an authoritative format. Human inspection is through
 stable CLI reports; machine access is through SQLite queries and canonical
 CBOR.
 
+The second compiler-facing tranche is also implemented:
+
+- a custom Agda 2.8 backend over `Agda.Compiler.Backend`;
+- extraction from typechecked internal terms rather than concrete source text;
+- a stable, version-independent elaboration snapshot;
+- de Bruijn validation, term interning, dependency discovery and feature
+  classification;
+- recognition of ordinary Agda builtin equality without treating Cubical paths
+  as Lean equality;
+- preservation of `Set`, `Prop` and `SSet` universe distinctions in the IR;
+- module-by-module Lean facade generation;
+- stable escaping that keeps Unicode and mixfix Agda names identifiable;
+- explicit reconstruction/axiom diagnostics and fail-closed emission.
+
+The next tranche is the mapping registry plus native Lean reconstruction
+adapters. It will replace selected generated axioms/sorries with Mathlib-aware
+proofs and then compare Lean's elaborated constant dependencies with the IR
+boundary.
+
 ## Architecture
 
 ```mermaid

@@ -1,5 +1,7 @@
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StrictData #-}
+{-# LANGUAGE TemplateHaskell #-}
 
 module Agda2Lean.Catalog
   ( Catalog
@@ -26,15 +28,17 @@ import Agda2Lean.Hash
   , renderObjectHash
   )
 import Agda2Lean.IR
-import Control.Exception (throwIO)
-import Control.Monad (forM, forM_, unless)
+import Control.Exception (onException, throwIO)
+import Control.Monad (forM_, unless)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
+import Data.FileEmbed (embedFile, makeRelativeToProject)
 import Data.Int (Int64)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as Text
+import qualified Data.Text.Encoding as Text
 import qualified Data.Vector as Vector
 import Data.Word (Word64)
 import Database.SQLite.Simple
@@ -45,13 +49,16 @@ import Database.SQLite.Simple
   , execute
   , execute_
   , field
+  , fold_
   , open
+  , Query (..)
   , query
   , query_
   , withTransaction
   )
 import Data.Time.Clock (getCurrentTime)
 import Data.Time.Format (defaultTimeLocale, formatTime)
+import Text.Read (readMaybe)
 
 newtype Catalog = Catalog {catalogConnection :: Connection}
 
@@ -93,15 +100,19 @@ data CatalogIssue = CatalogIssue
 openCatalog :: FilePath -> IO Catalog
 openCatalog path = do
   connection <- open path
-  configure connection
-  migrate connection
-  pure (Catalog connection)
+  (do
+      configure connection
+      migrate connection
+      pure (Catalog connection)
+    )
+    `onException` close connection
 
 closeCatalog :: Catalog -> IO ()
 closeCatalog = close . catalogConnection
 
 configure :: Connection -> IO ()
 configure connection = do
+  ensureSQLiteVersion connection
   execute_ connection "PRAGMA foreign_keys = ON"
   journalModes <-
     query_ connection "PRAGMA journal_mode = WAL" :: IO [Only Text]
@@ -114,65 +125,11 @@ configure connection = do
 
 migrate :: Connection -> IO ()
 migrate connection = withTransaction connection $ do
-  execute_
-    connection
-    "CREATE TABLE IF NOT EXISTS catalog_meta \
-    \(key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT"
-  execute_
-    connection
-    "CREATE TABLE IF NOT EXISTS ir_objects \
-    \(object_hash BLOB PRIMARY KEY, \
-    \object_kind TEXT NOT NULL CHECK (object_kind IN ('module')), \
-    \codec_version INTEGER NOT NULL CHECK (codec_version > 0), \
-    \cbor BLOB NOT NULL, \
-    \byte_length INTEGER NOT NULL CHECK (byte_length = length(cbor)), \
-    \created_at TEXT NOT NULL) STRICT"
-  execute_
-    connection
-    "CREATE TABLE IF NOT EXISTS module_heads \
-    \(module_name TEXT PRIMARY KEY, \
-    \object_hash BLOB NOT NULL REFERENCES ir_objects(object_hash), \
-    \declaration_count INTEGER NOT NULL CHECK (declaration_count >= 0), \
-    \term_count INTEGER NOT NULL CHECK (term_count >= 0), \
-    \updated_at TEXT NOT NULL) STRICT"
-  execute_
-    connection
-    "CREATE TABLE IF NOT EXISTS declarations \
-    \(declaration_name TEXT PRIMARY KEY, \
-    \module_name TEXT NOT NULL REFERENCES module_heads(module_name) ON DELETE CASCADE, \
-    \role TEXT NOT NULL, mapping_mode TEXT NOT NULL, \
-    \type_term_id INTEGER NOT NULL, body_term_id INTEGER, \
-    \source_file TEXT NOT NULL, \
-    \source_start_line INTEGER NOT NULL CHECK (source_start_line > 0), \
-    \source_end_line INTEGER NOT NULL CHECK (source_end_line >= source_start_line)) STRICT"
-  execute_
-    connection
-    "CREATE INDEX IF NOT EXISTS declarations_by_module \
-    \ON declarations(module_name)"
-  execute_
-    connection
-    "CREATE INDEX IF NOT EXISTS declarations_by_status \
-    \ON declarations(role, mapping_mode)"
-  execute_
-    connection
-    "CREATE TABLE IF NOT EXISTS direct_dependencies \
-    \(declaration_name TEXT NOT NULL REFERENCES declarations(declaration_name) ON DELETE CASCADE, \
-    \dependency_name TEXT NOT NULL, \
-    \PRIMARY KEY (declaration_name, dependency_name)) WITHOUT ROWID, STRICT"
-  execute_
-    connection
-    "CREATE INDEX IF NOT EXISTS dependencies_by_target \
-    \ON direct_dependencies(dependency_name)"
-  execute_
-    connection
-    "CREATE TABLE IF NOT EXISTS module_imports \
-    \(module_name TEXT NOT NULL REFERENCES module_heads(module_name) ON DELETE CASCADE, \
-    \imported_module_name TEXT NOT NULL, \
-    \PRIMARY KEY (module_name, imported_module_name)) WITHOUT ROWID, STRICT"
+  forM_ catalogSchemaStatements (execute_ connection)
   execute
     connection
     "INSERT OR IGNORE INTO catalog_meta(key, value) VALUES ('schema_version', ?)"
-    (Only ("1" :: Text))
+    (Only catalogSchemaVersion)
   execute
     connection
     "INSERT OR IGNORE INTO catalog_meta(key, value) VALUES ('codec_version', ?)"
@@ -182,8 +139,15 @@ migrate connection = withTransaction connection $ do
       connection
       "SELECT value FROM catalog_meta WHERE key = 'schema_version'"
   unless
-    (schemaVersions == [Only ("1" :: Text)])
+    (schemaVersions == [Only catalogSchemaVersion])
     (throwIO (userError "unsupported SQLite catalog schema"))
+  codecVersions <-
+    query_
+      connection
+      "SELECT value FROM catalog_meta WHERE key = 'codec_version'"
+  unless
+    (codecVersions == [Only (Text.pack (show codecVersion))])
+    (throwIO (userError "catalog was written with a different CBOR codec version"))
 
 storeModule :: Catalog -> ModuleIR -> IO ObjectHash
 storeModule (Catalog connection) moduleIR = do
@@ -317,11 +281,16 @@ readCatalogStats (Catalog connection) = do
 
 verifyCatalog :: Catalog -> IO [CatalogIssue]
 verifyCatalog (Catalog connection) = do
-  objects <-
-    query_
+  reversedIssues <-
+    fold_
       connection
       "SELECT object_hash, cbor FROM ir_objects ORDER BY object_hash"
-  fmap concat $ forM objects $ \(storedHashBytes, cborBytes) -> do
+      []
+      (\issues row -> pure (reverse (verifyObject row) <> issues))
+  pure (reverse reversedIssues)
+
+verifyObject :: (ByteString, ByteString) -> [CatalogIssue]
+verifyObject (storedHashBytes, cborBytes) =
     let storedHash = ObjectHash storedHashBytes
         actualHash = hashBytes cborBytes
         hashIssues =
@@ -339,7 +308,7 @@ verifyCatalog (Catalog connection) = do
               [ CatalogIssue storedHash "stored object is not canonically encoded"
               | encodeModule decoded /= cborBytes
               ]
-    pure (hashIssues <> decodingIssues)
+     in hashIssues <> decodingIssues
 
 data IndexedDeclaration = IndexedDeclaration
   { indexedName :: Text
@@ -371,8 +340,8 @@ toIndexedDeclaration declaration = do
   pure
     IndexedDeclaration
       { indexedName = unCanonicalName (declarationName declaration)
-      , indexedRole = constructorName (declarationRole declaration)
-      , indexedMapping = constructorName (declarationMapping declaration)
+      , indexedRole = roleStorageText (declarationRole declaration)
+      , indexedMapping = mappingStorageText (declarationMapping declaration)
       , indexedTypeTerm = typeTerm
       , indexedBodyTerm = bodyTerm
       , indexedSourceFile = sourceFile (declarationSource declaration)
@@ -390,8 +359,65 @@ checkedWord64 label value
       throwIO
         (userError (label <> " exceeds SQLite's signed 64-bit integer range"))
 
-constructorName :: Show a => a -> Text
-constructorName = Text.pack . show
+roleStorageText :: DeclarationRole -> Text
+roleStorageText = \case
+  ComputationalData -> "computational-data"
+  ComputationalFunction -> "computational-function"
+  ComputationalWitness -> "computational-witness"
+  LogicalProposition -> "logical-proposition"
+  Theorem -> "theorem"
+  AxiomDeclaration -> "axiom"
+  Certificate -> "certificate"
+  Adapter -> "adapter"
+
+mappingStorageText :: MappingMode -> Text
+mappingStorageText = \case
+  Exact -> "exact"
+  Encoded -> "encoded"
+  Reconstruct -> "reconstruct"
+  Quarantined -> "quarantined"
+  Unsupported -> "unsupported"
+
+catalogSchemaVersion :: Text
+catalogSchemaVersion = "2"
+
+catalogSchemaBytes :: ByteString
+catalogSchemaBytes =
+  $(makeRelativeToProject "schema/catalog.sql" >>= embedFile)
+
+catalogSchemaStatements :: [Query]
+catalogSchemaStatements =
+  [ Query (Text.encodeUtf8 statement)
+  | statement <-
+      map Text.strip
+        (Text.splitOn ";" (Text.decodeUtf8 catalogSchemaBytes))
+  , not (Text.null statement)
+  ]
+
+ensureSQLiteVersion :: Connection -> IO ()
+ensureSQLiteVersion connection = do
+  versions <- query_ connection "SELECT sqlite_version()" :: IO [Only Text]
+  case versions of
+    [Only version]
+      | sqliteVersionAtLeast (3, 37, 0) version -> pure ()
+      | otherwise ->
+          throwIO
+            ( userError
+                ( "SQLite 3.37.0 or newer is required for STRICT tables; found "
+                    <> Text.unpack version
+                )
+            )
+    _ -> throwIO (userError "could not determine SQLite version")
+
+sqliteVersionAtLeast :: (Int, Int, Int) -> Text -> Bool
+sqliteVersionAtLeast required version =
+  case
+      traverse
+        (readMaybe . Text.unpack)
+        (take 3 (Text.splitOn "." version))
+    of
+      Just [major, minor, patch] -> (major, minor, patch) >= required
+      _ -> False
 
 timestamp :: IO Text
 timestamp =

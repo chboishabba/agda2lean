@@ -1,6 +1,29 @@
 
 The primary translator and IR engine should be written in Haskell.
 
+## Implementation checkpoint
+
+The storage/core and first compiler-facing vertical slices are implemented.
+The repository now contains:
+
+- the typed DAG IR, canonical CBOR v2 and SQLite/WAL catalog;
+- a custom Agda 2.8 backend that receives typechecked `Definition` values;
+- a stable elaboration snapshot insulating the core from Agda API changes;
+- de Bruijn-safe normalization, term interning, dependency extraction and
+  feature classification;
+- explicit `Set`, `Prop` and `SSet` universe representations;
+- ordinary builtin equality recognition, while Cubical path application stays
+  quarantined;
+- an Agda-shaped Lean facade emitter with exact-name comments, escaped
+  Unicode/mixfix identifiers, reconstruction diagnostics and fail-closed mode;
+- unit fixtures plus a real `.agda` backend smoke fixture.
+
+The next unimplemented boundary is the mapping registry/native Lean adapter
+layer and the Lean-side manifest comparison. General pattern clauses are
+intentionally not copied as proof strategies: their statements and direct
+dependencies are extracted, and their Lean proofs are reconstruction
+obligations.
+
 That is the strongest choice because Agda itself is implemented in Haskell, and the critical input is Agda’s elaborated internal syntax, not parsed .agda text. A Haskell backend can access Agda’s checked declarations, inferred implicits, universes, pattern clauses, termination information and dependency graph directly.
 
 The complete system should deliberately use three languages:

@@ -8,12 +8,14 @@ import Agda2Lean.Classify (classifyModule)
 import Agda2Lean.Codec (decodeModule, encodeModule)
 import Agda2Lean.Hash (renderObjectHash)
 import Agda2Lean.IR (CanonicalName (..))
+import Agda2Lean.Lean.Emit
 import Agda2Lean.Render
 import Control.Exception (bracket)
 import Control.Monad (unless)
 import qualified Data.ByteString as ByteString
 import qualified Data.Text as Text
 import qualified Data.Text.IO as Text
+import qualified Data.Vector as Vector
 import Options.Applicative
 import System.Directory (createDirectoryIfMissing)
 import System.Exit (exitFailure)
@@ -24,6 +26,7 @@ data Command
   | PutModule GlobalOptions FilePath
   | Classify FilePath FilePath
   | GetModule GlobalOptions Text.Text FilePath
+  | EmitLean FilePath FilePath FilePath Bool
   | Inspect GlobalOptions (Maybe Text.Text)
   | Verify GlobalOptions
 
@@ -69,6 +72,12 @@ commandParser =
               (progDesc "Write a module's canonical CBOR object")
           )
         <> command
+          "emit-lean"
+          ( info
+              emitLeanParser
+              (progDesc "Emit an Agda-shaped Lean facade and diagnostics")
+          )
+        <> command
           "inspect"
           ( info
               (Inspect <$> globalOptions <*> optional moduleOption)
@@ -108,6 +117,19 @@ moduleOption =
     <$> strOption
       (long "module" <> short 'm' <> metavar "NAME" <> help "Canonical module name")
 
+emitLeanParser :: Parser Command
+emitLeanParser =
+  EmitLean
+    <$> inputOption
+    <*> strOption
+      (long "lean-output" <> metavar "PATH" <> help "Generated Lean file")
+    <*> strOption
+      (long "diagnostics" <> metavar "PATH" <> help "Tabular diagnostics file")
+    <*> switch
+      ( long "fail-on-reconstruction"
+          <> help "Do not emit sorry at reconstruction boundaries"
+      )
+
 runCommand :: Command -> IO ()
 runCommand (Classify inputPath outputPath) = do
   bytes <- ByteString.readFile inputPath
@@ -118,6 +140,24 @@ runCommand (Classify inputPath outputPath) = do
       (decodeModule bytes)
   createDirectoryIfMissing True (takeDirectory outputPath)
   ByteString.writeFile outputPath (encodeModule (classifyModule moduleIR))
+runCommand (EmitLean inputPath leanPath diagnosticsPath failOnReconstruction) = do
+  bytes <- ByteString.readFile inputPath
+  moduleIR <-
+    either
+      (ioError . userError . Text.unpack)
+      pure
+      (decodeModule bytes)
+  let output =
+        emitLeanModule
+          defaultEmitOptions
+            { emitSorryBodies = not failOnReconstruction
+            }
+          moduleIR
+  createDirectoryIfMissing True (takeDirectory leanPath)
+  createDirectoryIfMissing True (takeDirectory diagnosticsPath)
+  Text.writeFile leanPath (leanSource output)
+  Text.writeFile diagnosticsPath (renderDiagnostics (leanDiagnostics output))
+  whenErrors (leanDiagnostics output)
 runCommand command' = do
   let options = commandOptions command'
       path = databasePath options
@@ -165,12 +205,21 @@ runCommand command' = do
         unless (null issues) exitFailure
       Classify _ _ ->
         ioError (userError "internal error: classify opened the catalog")
+      EmitLean _ _ _ _ ->
+        ioError (userError "internal error: emit-lean opened the catalog")
 
 commandOptions :: Command -> GlobalOptions
 commandOptions = \case
   Init options -> options
   PutModule options _ -> options
   Classify _ _ -> error "classify does not use a catalog"
+  EmitLean _ _ _ _ -> error "emit-lean does not use a catalog"
   GetModule options _ _ -> options
   Inspect options _ -> options
   Verify options -> options
+
+whenErrors :: Vector.Vector LeanDiagnostic -> IO ()
+whenErrors diagnostics =
+  if Vector.any ((== Error) . diagnosticSeverity) diagnostics
+    then exitFailure
+    else pure ()

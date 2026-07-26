@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StrictData #-}
 
 module Agda2Lean.Classify
@@ -40,7 +41,7 @@ classifyDeclaration :: ModuleIR -> CoreDeclaration -> Classification
 classifyDeclaration moduleIR declaration =
   Classification
     { classificationMode =
-        max
+        stricterMode
           (declarationMapping declaration)
           (requiredMode inferredFeatures)
     , classificationFeatures = inferredFeatures
@@ -49,11 +50,31 @@ classifyDeclaration moduleIR declaration =
   where
     roots =
       declarationType declaration
-        : maybe [] pure (declarationBody declaration)
+        : ( maybe [] pure (declarationBody declaration)
+              <> map
+                binderType
+                (Vector.toList (declarationModuleParameters declaration))
+          )
     reachable = reachableTerms (moduleTerms moduleIR) roots
     inferredFeatures =
       declarationFeatures declaration
         <> foldMap termFeatures reachable
+
+stricterMode :: MappingMode -> MappingMode -> MappingMode
+stricterMode left right
+  | mappingSeverity left >= mappingSeverity right = left
+  | otherwise = right
+
+-- Keep policy independent of constructor order and therefore of the CBOR tag
+-- order used by the codec.
+mappingSeverity :: MappingMode -> Int
+mappingSeverity mode =
+  case mode of
+    Exact -> 0
+    Encoded -> 1
+    Reconstruct -> 2
+    Quarantined -> 3
+    Unsupported -> 4
 
 requiredMode :: Set Feature -> MappingMode
 requiredMode features
@@ -111,27 +132,3 @@ termFeatures term =
            UnsafeUniversePrimitive {} -> UnsafeUniverse
         )
     _ -> Set.empty
-
-termReferences :: CoreTerm -> Set TermId
-termReferences term =
-  case term of
-    Var _ -> Set.empty
-    Sort _ -> Set.empty
-    Pi binder body -> Set.fromList [binderType binder, body]
-    Sigma binder body -> Set.fromList [binderType binder, body]
-    Lam binder body -> Set.fromList [binderType binder, body]
-    App function argument ->
-      Set.fromList [function, argumentTerm argument]
-    Constructor _ arguments -> argumentReferences arguments
-    Eliminator _ arguments -> argumentReferences arguments
-    Equality type' left right -> Set.fromList [type', left, right]
-    Axiom _ -> Set.empty
-    Extension extension ->
-      case extension of
-        CubicalPrimitive _ terms -> Set.fromList (Vector.toList terms)
-        RewritePrimitive _ terms -> Set.fromList (Vector.toList terms)
-        CoinductivePrimitive _ terms -> Set.fromList (Vector.toList terms)
-        UnsafeUniversePrimitive _ -> Set.empty
-  where
-    argumentReferences =
-      Set.fromList . map argumentTerm . Vector.toList

@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Agda2Lean.Render
   ( renderCatalogIssues
   , renderCatalogStats

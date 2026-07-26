@@ -1,4 +1,5 @@
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StrictData #-}
 
 module Agda2Lean.IR
@@ -20,6 +21,7 @@ module Agda2Lean.IR
   , Universe (..)
   , Visibility (..)
   , currentSchemaVersion
+  , termReferences
   , validateModule
   ) where
 
@@ -39,7 +41,7 @@ newtype SchemaVersion = SchemaVersion {unSchemaVersion :: Word16}
   deriving stock (Eq, Ord, Show, Generic)
 
 currentSchemaVersion :: SchemaVersion
-currentSchemaVersion = SchemaVersion 1
+currentSchemaVersion = SchemaVersion 2
 
 newtype CanonicalName = CanonicalName {unCanonicalName :: Text}
   deriving stock (Eq, Ord, Show, Generic)
@@ -66,6 +68,8 @@ data Universe
   | USuc Universe
   | UMax (Vector Universe)
   | ULevel Text
+  | UProp Universe
+  | USSet Universe
   deriving stock (Eq, Ord, Show, Generic)
 
 data Binder = Binder
@@ -218,6 +222,12 @@ validateModule ir
           <> unCanonicalName (declarationName declaration)
       | not (validCanonicalName (declarationName declaration))
       ]
+        <> [ "declaration "
+               <> unCanonicalName (declarationName declaration)
+               <> " is outside module namespace "
+               <> unCanonicalName (moduleName ir)
+           | not (declarationBelongsToModule declaration)
+           ]
         <> [ "missing type term for "
                <> unCanonicalName (declarationName declaration)
            | not (termExists (declarationType declaration))
@@ -247,6 +257,11 @@ validateModule ir
            | declarationMapping declaration == Unsupported
            , declarationBody declaration /= Nothing
            ]
+
+    declarationBelongsToModule declaration =
+      let modulePrefix = unCanonicalName (moduleName ir) <> "."
+       in modulePrefix
+            `Text.isPrefixOf` unCanonicalName (declarationName declaration)
 
 validCanonicalName :: CanonicalName -> Bool
 validCanonicalName (CanonicalName name) =

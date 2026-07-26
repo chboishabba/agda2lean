@@ -1,4 +1,7 @@
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Agda2Lean.Codec
   ( codecVersion
@@ -39,7 +42,7 @@ import qualified Data.Vector as Vector
 import Data.Word (Word16)
 
 codecVersion :: Word16
-codecVersion = 1
+codecVersion = 2
 
 encodeModule :: ModuleIR -> ByteString
 encodeModule = toStrictByteString . encodeModuleIR
@@ -122,6 +125,10 @@ encodeUniverse = \case
     encodeListLen 2 <> encodeWord 2 <> encodeVector encodeUniverse universes
   ULevel name ->
     encodeListLen 2 <> encodeWord 3 <> encodeString name
+  UProp universe ->
+    encodeListLen 2 <> encodeWord 4 <> encodeUniverse universe
+  USSet universe ->
+    encodeListLen 2 <> encodeWord 5 <> encodeUniverse universe
 
 decodeUniverse :: Decoder s Universe
 decodeUniverse = do
@@ -132,6 +139,8 @@ decodeUniverse = do
     (1, 2) -> USuc <$> decodeUniverse
     (2, 2) -> UMax <$> decodeVector decodeUniverse
     (3, 2) -> ULevel <$> decodeString
+    (4, 2) -> UProp <$> decodeUniverse
+    (5, 2) -> USSet <$> decodeUniverse
     _ -> fail "invalid Universe encoding"
 
 encodeBinder :: Binder -> Encoding
@@ -334,7 +343,7 @@ encodeVector encoder values =
 
 decodeVector :: Decoder s a -> Decoder s (Vector.Vector a)
 decodeVector decoder = do
-  length' <- decodeListLen
+  length' <- decodeBoundedListLen "vector"
   Vector.fromList <$> replicateM length' decoder
 
 encodeSet :: (a -> Encoding) -> Set.Set a -> Encoding
@@ -369,7 +378,7 @@ decodeMap ::
   Decoder s value ->
   Decoder s (Map.Map key value)
 decodeMap decodeKey decodeValue = do
-  length' <- decodeListLen
+  length' <- decodeBoundedListLen "map"
   entries <- replicateM length' $ do
     expectListLen 2
     (,) <$> decodeKey <*> decodeValue
@@ -377,6 +386,20 @@ decodeMap decodeKey decodeValue = do
   unless (Map.size result == length entries) (fail "duplicate map key")
   unless (Map.toAscList result == entries) (fail "map keys not canonical")
   pure result
+
+-- The limit is per module object, not per catalog. It is deliberately high
+-- enough for very large proof modules while preventing a corrupt CBOR header
+-- from requesting an effectively unbounded allocation.
+maxContainerLength :: Int
+maxContainerLength = 10_000_000
+
+decodeBoundedListLen :: String -> Decoder s Int
+decodeBoundedListLen label = do
+  length' <- decodeListLen
+  unless
+    (length' <= maxContainerLength)
+    (fail (label <> " exceeds maximum container length"))
+  pure length'
 
 decodeBoundedEnum :: forall a s. (Bounded a, Enum a) => String -> Decoder s a
 decodeBoundedEnum label = do
