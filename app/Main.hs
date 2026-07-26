@@ -163,12 +163,14 @@ runCommand command' = do
         issues <- verifyCatalog catalog
         Text.putStr (renderCatalogIssues issues)
         unless (null issues) exitFailure
+      Classify _ _ ->
+        ioError (userError "internal error: classify opened the catalog")
 
 commandOptions :: Command -> GlobalOptions
 commandOptions = \case
   Init options -> options
   PutModule options _ -> options
-  Classify {} -> error "classify does not use a catalog"
+  Classify _ _ -> error "classify does not use a catalog"
   GetModule options _ _ -> options
   Inspect options _ -> options
   Verify options -> options
