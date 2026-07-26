@@ -1,0 +1,8 @@
+dist-newstyle/
+.direnv/
+.envrc
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.cbor
+result

@@ -1,5 +1,40 @@
 The strongest architecture is a **proof-producing, typed IR pipeline with native implementations on both sides**. The IR coordinates meaning and dependencies; it is not itself trusted. Agda and Lean independently kernel-check the resulting declarations.
 
+## Implementation status
+
+The first Phase 0/1 tranche is now implemented:
+
+- strict typed Haskell Core IR represented as a term DAG;
+- deterministic versioned canonical CBOR codec;
+- SHA-256 semantic object identities;
+- SQLite catalog in WAL mode with immutable objects and module heads;
+- normalized declaration, import and direct-dependency indexes;
+- CLI initialization, ingestion, extraction, inspection and verification;
+- codec determinism, round-trip, deduplication and corruption tests.
+
+JSON is not used as an authoritative format. Human inspection is through
+stable CLI reports; machine access is through SQLite queries and canonical
+CBOR.
+
+The second compiler-facing tranche is also implemented:
+
+- a custom Agda 2.8 backend over `Agda.Compiler.Backend`;
+- extraction from typechecked internal terms rather than concrete source text;
+- a stable, version-independent elaboration snapshot;
+- de Bruijn validation, term interning, dependency discovery and feature
+  classification;
+- recognition of ordinary Agda builtin equality without treating Cubical paths
+  as Lean equality;
+- preservation of `Set`, `Prop` and `SSet` universe distinctions in the IR;
+- module-by-module Lean facade generation;
+- stable escaping that keeps Unicode and mixfix Agda names identifiable;
+- explicit reconstruction/axiom diagnostics and fail-closed emission.
+
+The next tranche is the mapping registry plus native Lean reconstruction
+adapters. It will replace selected generated axioms/sorries with Mathlib-aware
+proofs and then compare Lean's elaborated constant dependencies with the IR
+boundary.
+
 ## Architecture
 
 ```mermaid
@@ -485,7 +520,9 @@ The generated receipt should be machine-readable and human-readable.
 
 3. **Canonical serialization specification**
 
-   * Versioned canonical JSON.
+   * Versioned canonical CBOR.
+   * SQLite/WAL operational catalog.
+   * Content-addressed immutable module objects.
    * Stable qualified names and binder IDs.
    * Semantic hashes.
    * Deterministic key and declaration ordering.

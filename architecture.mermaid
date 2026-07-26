@@ -2,8 +2,9 @@ flowchart TD
     subgraph Source["Source and extraction"]
         AS["Agda source"]
         AE["Agda elaborator"]
-        EX["Haskell extractor"]
-        AS --> AE --> EX
+        AB["Pinned Agda backend"]
+        EX["Snapshot normalizer"]
+        AS --> AE --> AB --> EX
     end
 
     subgraph Core["DASHI Core IR"]
@@ -13,6 +14,14 @@ flowchart TD
         EX --> IR
         IR --> FP
         MR --> FP
+    end
+
+    subgraph Persistence["Deterministic persistence"]
+        CB["Canonical CBOR"]
+        HS["Semantic object hash"]
+        DB["SQLite WAL catalog"]
+        IR --> CB --> HS --> DB
+        DB --> FP
     end
 
     subgraph Lowering["Translation planning"]

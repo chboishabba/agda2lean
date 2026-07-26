@@ -1,6 +1,29 @@
 
 The primary translator and IR engine should be written in Haskell.
 
+## Implementation checkpoint
+
+The storage/core and first compiler-facing vertical slices are implemented.
+The repository now contains:
+
+- the typed DAG IR, canonical CBOR v2 and SQLite/WAL catalog;
+- a custom Agda 2.8 backend that receives typechecked `Definition` values;
+- a stable elaboration snapshot insulating the core from Agda API changes;
+- de Bruijn-safe normalization, term interning, dependency extraction and
+  feature classification;
+- explicit `Set`, `Prop` and `SSet` universe representations;
+- ordinary builtin equality recognition, while Cubical path application stays
+  quarantined;
+- an Agda-shaped Lean facade emitter with exact-name comments, escaped
+  Unicode/mixfix identifiers, reconstruction diagnostics and fail-closed mode;
+- unit fixtures plus a real `.agda` backend smoke fixture.
+
+The next unimplemented boundary is the mapping registry/native Lean adapter
+layer and the Lean-side manifest comparison. General pattern clauses are
+intentionally not copied as proof strategies: their statements and direct
+dependencies are extracted, and their Lean proofs are reconstruction
+obligations.
+
 That is the strongest choice because Agda itself is implemented in Haskell, and the critical input is Agda’s elaborated internal syntax, not parsed .agda text. A Haskell backend can access Agda’s checked declarations, inferred implicits, universes, pattern clauses, termination information and dependency graph directly.
 
 The complete system should deliberately use three languages:
@@ -157,25 +180,19 @@ core-ir/
   source-map
   obligations
   feature-extensions
-Initially, canonical JSON is adequate:
+The authoritative encoding is versioned canonical CBOR. The operational,
+queryable store is SQLite in WAL mode. Large typed terms remain a
+content-addressed DAG inside immutable module objects, while SQLite indexes
+module heads, declarations, direct dependencies, mapping states and receipts.
 
-{
-  "schema": "dashi-core-ir/1",
-  "name": "DASHI.Algebra.scalarAllocation",
-  "role": "theorem",
-  "universes": [],
-  "parameters": [],
-  "type": {},
-  "body": {},
-  "dependencies": [],
-  "mapping": {
-    "statement": "exact",
-    "computation": "reconstructed"
-  }
-}
+JSON is not part of the authoritative interchange or inspection path. Human
+inspection is provided by stable CLI tables and targeted reports; machine
+inspection uses SQL or canonical CBOR.
 For reproducibility:
 
-keys must have canonical ordering;
+CBOR arrays must have fixed constructor tags and definite lengths;
+
+sets and term tables must be emitted in ascending canonical order;
 
 names must be fully qualified;
 
@@ -185,7 +202,9 @@ source formatting must not affect semantic hashes;
 
 declaration and dependency hashes must use canonical encoding.
 
-CBOR could be added later if size becomes a problem, but readable JSON is more valuable while the IR is evolving.
+SQLite database bytes are not semantic identities: page layout, insertion
+order and vacuuming are operational details. Semantic hashes are computed over
+canonical CBOR before an object is installed in SQLite.
 
 The trusted boundary
 The translator itself does not need to be trusted as an oracle.
@@ -291,7 +310,7 @@ Agda pinned to the exact repository version;
 
 one Haskell package containing the IR;
 
-one Agda backend producing canonical JSON;
+one Agda backend producing canonical CBOR and SQLite catalog entries;
 
 one Haskell Lean emitter;
 
@@ -1045,7 +1064,7 @@ Extension mechanism.
 
 Canonical serialization specification
 
-Versioned canonical JSON.
+Versioned canonical CBOR with a SQLite/WAL operational catalog.
 
 Stable qualified names and binder IDs.
 
@@ -1822,7 +1841,7 @@ The extractor must not retain pointers into Agda’s full compiler state.
 Use deepseq at the boundary before serialization so delayed work cannot retain the original TCState.
 
 Streaming serialization
-Avoid building one enormous JSON object.
+Avoid building one enormous in-memory serialization value.
 
 Persist:
 
@@ -1830,7 +1849,9 @@ manifest metadata
 module-level declaration index
 content-addressed term chunks
 direct dependency edges
-Use streaming encoders or builders. Human-readable JSON is suitable for manifests, while large term bodies should eventually use compressed canonical CBOR or another compact encoding.
+Use streaming CBOR encoders or builders. Human-facing manifests are rendered
+as CLI tables and reports from SQLite queries; large term bodies remain
+content-addressed canonical CBOR objects.
 
 Hash-consing
 Repeated:

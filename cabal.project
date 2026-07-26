@@ -1,0 +1,8 @@
+packages: .
+
+index-state: 2026-07-01T00:00:00Z
+tests: True
+documentation: False
+
+package agda2lean
+  ghc-options: -O2
