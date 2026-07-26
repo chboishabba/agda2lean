@@ -209,11 +209,25 @@ snapshotTerm = \case
       ("unsolved Agda metavariable: " <> Text.pack (prettyShow meta))
       (Vector.fromList (map eliminationTerm eliminations))
   Agda.DontCare term -> snapshotTerm term
-  Agda.Dummy label _ ->
+  Agda.Dummy kind eliminations ->
     Snapshot.AgdaUnsupported
       Core.UnsafeUniverse
-      ("Agda internal dummy: " <> Text.pack label)
-      Vector.empty
+      ("Agda internal dummy: " <> dummyDescription kind)
+      ( Vector.fromList
+          ( dummyTerms kind
+              <> map eliminationTerm eliminations
+          )
+      )
+
+dummyDescription :: Agda.DummyTermKind -> Text.Text
+dummyDescription = \case
+  Agda.DummyNamed label -> Text.pack label
+  Agda.DummyBrave term -> "brave term: " <> Text.pack (prettyShow term)
+
+dummyTerms :: Agda.DummyTermKind -> [Snapshot.AgdaTerm]
+dummyTerms = \case
+  Agda.DummyNamed _ -> []
+  Agda.DummyBrave term -> [snapshotTerm term]
 
 snapshotDomain :: Agda.Dom Agda.Type -> Agda.ArgName -> Snapshot.AgdaBinder
 snapshotDomain domain suggestedName =
@@ -322,13 +336,16 @@ declarationRole = \case
 
 definitionFeatures :: Agda.Definition -> Set.Set Core.Feature
 definitionFeatures definition =
-  cubical <> recursive <> coinductive <> definitionKindFeatures (Agda.theDef definition)
+  cubical
+    <> recursive
+    <> coinductive
+    <> termInternalFeatures (Agda.unEl (Agda.defType definition))
+    <> definitionKindFeatures (Agda.theDef definition)
   where
     cubical =
-      Set.fromList
-        [ Core.Cubical
-        | Agda.defNoCompilation definition
-        ]
+      case Agda.defLanguage definition of
+        Agda.Cubical _ -> Set.singleton Core.Cubical
+        _ -> Set.empty
     recursive =
       case Agda.theDef definition of
         Agda.Function {Agda.funMutual = Just mutual}
@@ -362,11 +379,12 @@ definitionBodyDependencies :: Agda.Definition -> Set.Set Core.CanonicalName
 definitionBodyDependencies definition =
   Set.delete
     (canonicalName (Agda.defName definition))
-    (case Agda.theDef definition of
-       Agda.Function {Agda.funClauses = clauses} -> foldMap clauseDependencies clauses
-       Agda.Primitive {Agda.primClauses = clauses} -> foldMap clauseDependencies clauses
-       Agda.AbstractDefn inner -> definitionKindDependencies inner
-       _ -> Set.empty
+    ( typeGlobalNames (Agda.defType definition)
+        <> case Agda.theDef definition of
+          Agda.Function {Agda.funClauses = clauses} -> foldMap clauseDependencies clauses
+          Agda.Primitive {Agda.primClauses = clauses} -> foldMap clauseDependencies clauses
+          Agda.AbstractDefn inner -> definitionKindDependencies inner
+          _ -> Set.empty
     )
 
 definitionKindDependencies :: Agda.Defn -> Set.Set Core.CanonicalName
@@ -394,13 +412,35 @@ termInternalFeatures = \case
   Agda.Def _ eliminations -> foldMap eliminationInternalFeatures eliminations
   Agda.Con _ _ eliminations -> foldMap eliminationInternalFeatures eliminations
   Agda.Pi domain codomain ->
-    termInternalFeatures (Agda.unEl (Agda.unDom domain))
+    domainInternalFeatures domain
       <> termInternalFeatures (Agda.unEl (Agda.unAbs codomain))
   Agda.Sort sort' -> sortInternalFeatures sort'
   Agda.Level level -> levelInternalFeatures level
   Agda.MetaV _ eliminations -> foldMap eliminationInternalFeatures eliminations
   Agda.DontCare term -> termInternalFeatures term
-  Agda.Dummy _ eliminations -> foldMap eliminationInternalFeatures eliminations
+  Agda.Dummy kind eliminations ->
+    foldMap termInternalFeatures (dummyKindTerms kind)
+      <> foldMap eliminationInternalFeatures eliminations
+
+domainInternalFeatures :: Agda.Dom Agda.Type -> Set.Set Core.Feature
+domainInternalFeatures domain =
+  termInternalFeatures (Agda.unEl (Agda.unDom domain))
+    <> foldMap localEquationInternalFeatures (Agda.domEq domain)
+
+localEquationInternalFeatures :: Agda.LocalEquation -> Set.Set Core.Feature
+localEquationInternalFeatures equation =
+  Set.insert
+    Core.RewriteRule
+    ( foldMap domainInternalFeatures (Agda.lEqContext equation)
+        <> termInternalFeatures (Agda.lEqLHS equation)
+        <> termInternalFeatures (Agda.lEqRHS equation)
+        <> termInternalFeatures (Agda.unEl (Agda.lEqType equation))
+    )
+
+dummyKindTerms :: Agda.DummyTermKind -> [Agda.Term]
+dummyKindTerms = \case
+  Agda.DummyNamed _ -> []
+  Agda.DummyBrave term -> [term]
 
 eliminationInternalFeatures :: Agda.Elim -> Set.Set Core.Feature
 eliminationInternalFeatures = \case
@@ -426,6 +466,7 @@ sortInternalFeatures = \case
   Agda.IntervalUniv -> Set.singleton Core.Cubical
   Agda.PiSort domain sort' abstraction ->
     termInternalFeatures (Agda.unDom domain)
+      <> foldMap localEquationInternalFeatures (Agda.domEq domain)
       <> sortInternalFeatures sort'
       <> sortInternalFeatures (Agda.unAbs abstraction)
   Agda.FunSort left right ->
@@ -456,13 +497,27 @@ termGlobalNames = \case
       (canonicalName (Agda.conName head'))
       (foldMap eliminationGlobalNames eliminations)
   Agda.Pi domain codomain ->
-    typeGlobalNames (Agda.unDom domain)
+    domainGlobalNames domain
       <> typeGlobalNames (Agda.unAbs codomain)
   Agda.Sort sort' -> sortGlobalNames sort'
   Agda.Level level -> levelGlobalNames level
   Agda.MetaV _ eliminations -> foldMap eliminationGlobalNames eliminations
   Agda.DontCare term -> termGlobalNames term
-  Agda.Dummy _ eliminations -> foldMap eliminationGlobalNames eliminations
+  Agda.Dummy kind eliminations ->
+    foldMap termGlobalNames (dummyKindTerms kind)
+      <> foldMap eliminationGlobalNames eliminations
+
+domainGlobalNames :: Agda.Dom Agda.Type -> Set.Set Core.CanonicalName
+domainGlobalNames domain =
+  typeGlobalNames (Agda.unDom domain)
+    <> foldMap localEquationGlobalNames (Agda.domEq domain)
+
+localEquationGlobalNames :: Agda.LocalEquation -> Set.Set Core.CanonicalName
+localEquationGlobalNames equation =
+  foldMap domainGlobalNames (Agda.lEqContext equation)
+    <> termGlobalNames (Agda.lEqLHS equation)
+    <> termGlobalNames (Agda.lEqRHS equation)
+    <> typeGlobalNames (Agda.lEqType equation)
 
 typeGlobalNames :: Agda.Type -> Set.Set Core.CanonicalName
 typeGlobalNames = termGlobalNames . Agda.unEl
@@ -486,6 +541,7 @@ sortGlobalNames = \case
   Agda.IntervalUniv -> Set.empty
   Agda.PiSort domain sort' abstraction ->
     termGlobalNames (Agda.unDom domain)
+      <> foldMap localEquationGlobalNames (Agda.domEq domain)
       <> sortGlobalNames sort'
       <> sortGlobalNames (Agda.unAbs abstraction)
   Agda.FunSort left right -> sortGlobalNames left <> sortGlobalNames right

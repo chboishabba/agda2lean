@@ -39,7 +39,7 @@ jobs:
           persist-credentials: false
       - uses: haskell-actions/setup@v2
         with:
-          ghc-version: "9.6.6"
+          ghc-version: "9.6.7"
           cabal-version: "3.10.3.0"
       - name: Cache dependencies
         uses: actions/cache@v4
@@ -47,15 +47,79 @@ jobs:
           path: |
             ~/.cabal/store
             dist-newstyle
-          key: ${{ runner.os }}-agda-2.8-ghc-9.6.6-${{ hashFiles('**/*.cabal', 'cabal.project') }}
+          key: ${{ runner.os }}-agda-2.9-7347b801-ghc-9.6.7-${{ hashFiles('**/*.cabal', 'cabal.project*') }}
           restore-keys: |
-            ${{ runner.os }}-agda-2.8-ghc-9.6.6-
+            ${{ runner.os }}-agda-2.9-7347b801-ghc-9.6.7-
       - run: cabal update
-      - run: cabal build -fagda-backend agda2lean-agda
+      - run: cabal --project-file=cabal.project.agda-2.9 build -fagda-backend agda2lean-agda
       - name: Extract a typechecked Agda fixture
         run: |
-          cabal run -fagda-backend agda2lean-agda -- \
+          cabal --project-file=cabal.project.agda-2.9 run -fagda-backend agda2lean-agda -- \
+            -j2 \
             --lean-ir \
             --compile-dir build/agda-ir \
             test/agda/Identity.agda
           test -f build/agda-ir/Identity/module.a2l.cbor
+          cabal --project-file=cabal.project.agda-2.9 run -fagda-backend agda2lean-agda -- \
+            -j2 \
+            --lean-ir \
+            --compile-dir build/agda-ir \
+            test/agda/LocalRewrite.agda
+          test -f build/agda-ir/LocalRewrite/module.a2l.cbor
+          cabal --project-file=cabal.project.agda-2.9 run agda2lean -- emit-lean \
+            --input build/agda-ir/LocalRewrite/module.a2l.cbor \
+            --lean-output build/agda-ir/LocalRewrite.lean \
+            --diagnostics build/agda-ir/LocalRewrite.diagnostics.tsv
+          grep -q -- "-- Mapping: Reconstruct" build/agda-ir/LocalRewrite.lean
+
+  dashi-mirror-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: chboishabba/dashi_agda
+          ref: 72ae53834be4cd6df842d80fae97c892990ccef6
+          path: build/fixtures/dashi_agda
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: chboishabba/dashi_lean4
+          ref: 55132524c2e132c0b86c17eeb60d7e39c3af08b6
+          path: build/fixtures/dashi_lean4
+          persist-credentials: false
+      - uses: haskell-actions/setup@v2
+        with:
+          ghc-version: "9.6.7"
+          cabal-version: "3.10.3.0"
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cabal/store
+            dist-newstyle
+          key: ${{ runner.os }}-agda-2.9-7347b801-ghc-9.6.7-${{ hashFiles('**/*.cabal', 'cabal.project*') }}
+          restore-keys: |
+            ${{ runner.os }}-agda-2.9-7347b801-ghc-9.6.7-
+      - run: cabal update
+      - run: cabal --project-file=cabal.project.agda-2.9 build -fagda-backend agda2lean-agda agda2lean
+      - name: Extract and compare the DASHI Moonshine surface
+        run: |
+          cabal --project-file=cabal.project.agda-2.9 run -fagda-backend agda2lean-agda -- \
+            -j2 \
+            --lean-ir \
+            --compile-dir build/dashi-ir \
+            -i build/fixtures/dashi_agda \
+            build/fixtures/dashi_agda/Moonshine.agda
+          cabal --project-file=cabal.project.agda-2.9 run agda2lean -- emit-lean \
+            --input build/dashi-ir/Moonshine/module.a2l.cbor \
+            --lean-output build/dashi-ir/Moonshine.generated.lean \
+            --diagnostics build/dashi-ir/Moonshine.diagnostics.tsv
+          grep -q -- "-- Agda: Moonshine.moonshine" build/dashi-ir/Moonshine.generated.lean
+          grep -q -- "-- Agda: Moonshine.mckay" build/dashi-ir/Moonshine.generated.lean
+          grep -q -- "-- Agda: Moonshine.embedding" build/dashi-ir/Moonshine.generated.lean
+          grep -q -- "theorem moonshine" build/fixtures/dashi_lean4/Moonshine.lean
+          grep -q -- "theorem mckay" build/fixtures/dashi_lean4/Moonshine.lean
+          grep -q -- "theorem embedding" build/fixtures/dashi_lean4/Moonshine.lean

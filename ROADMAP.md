@@ -18,7 +18,7 @@ CBOR.
 
 The second compiler-facing tranche is also implemented:
 
-- a custom Agda 2.8 backend over `Agda.Compiler.Backend`;
+- a custom, exact-revision Agda 2.9 backend over `Agda.Compiler.Backend`;
 - extraction from typechecked internal terms rather than concrete source text;
 - a stable, version-independent elaboration snapshot;
 - de Bruijn validation, term interning, dependency discovery and feature

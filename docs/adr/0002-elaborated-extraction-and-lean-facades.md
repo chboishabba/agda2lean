@@ -7,7 +7,13 @@ Accepted.
 ## Decision
 
 `agda2lean` extracts Agda's typechecked internal syntax through a custom Agda
-2.8 compiler backend. It does not parse concrete `.agda` text.
+2.9 compiler backend pinned to an audited source revision. It does not parse
+concrete `.agda` text.
+
+The backend uses Agda 2.9 language metadata for Cubical classification and
+preserves dependencies/features from local `@rewrite` domains. Agda import
+elaboration may run with a bounded `-j` value, while snapshot emission remains
+deterministic and sequential per module.
 
 The boundary is split into two layers:
 
