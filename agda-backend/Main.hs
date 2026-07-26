@@ -322,7 +322,7 @@ declarationRole = \case
 
 definitionFeatures :: Agda.Definition -> Set.Set Core.Feature
 definitionFeatures definition =
-  cubical <> recursive <> coinductive
+  cubical <> recursive <> coinductive <> definitionKindFeatures (Agda.theDef definition)
   where
     cubical =
       Set.fromList
@@ -340,6 +340,23 @@ definitionFeatures definition =
         Agda.Record {Agda.recInduction = Just Agda.CoInductive} ->
           Set.singleton Core.Coinduction
         _ -> Set.empty
+
+definitionKindFeatures :: Agda.Defn -> Set.Set Core.Feature
+definitionKindFeatures = \case
+  Agda.Function {Agda.funClauses = clauses} -> foldMap clauseFeatures clauses
+  Agda.Primitive {Agda.primClauses = clauses} -> foldMap clauseFeatures clauses
+  Agda.AbstractDefn inner -> definitionKindFeatures inner
+  _ -> Set.empty
+
+clauseFeatures :: Agda.Clause -> Set.Set Core.Feature
+clauseFeatures clause =
+  foldMap termInternalFeatures (Agda.clauseBody clause)
+    <> foldMap
+      (termInternalFeatures . Agda.unEl . Agda.unDom)
+      (Agda.clauseTel clause)
+    <> foldMap
+      (termInternalFeatures . Agda.unEl . Agda.unArg)
+      (Agda.clauseType clause)
 
 definitionBodyDependencies :: Agda.Definition -> Set.Set Core.CanonicalName
 definitionBodyDependencies definition =
@@ -361,7 +378,68 @@ definitionKindDependencies = \case
 
 clauseDependencies :: Agda.Clause -> Set.Set Core.CanonicalName
 clauseDependencies clause =
-  maybe Set.empty termGlobalNames (Agda.clauseBody clause)
+  foldMap termGlobalNames (Agda.clauseBody clause)
+    <> foldMap
+      (typeGlobalNames . Agda.unDom)
+      (Agda.clauseTel clause)
+    <> foldMap
+      (typeGlobalNames . Agda.unArg)
+      (Agda.clauseType clause)
+
+termInternalFeatures :: Agda.Term -> Set.Set Core.Feature
+termInternalFeatures = \case
+  Agda.Var _ eliminations -> foldMap eliminationInternalFeatures eliminations
+  Agda.Lam _ abstraction -> termInternalFeatures (Agda.unAbs abstraction)
+  Agda.Lit _ -> Set.empty
+  Agda.Def _ eliminations -> foldMap eliminationInternalFeatures eliminations
+  Agda.Con _ _ eliminations -> foldMap eliminationInternalFeatures eliminations
+  Agda.Pi domain codomain ->
+    termInternalFeatures (Agda.unEl (Agda.unDom domain))
+      <> termInternalFeatures (Agda.unEl (Agda.unAbs codomain))
+  Agda.Sort sort' -> sortInternalFeatures sort'
+  Agda.Level level -> levelInternalFeatures level
+  Agda.MetaV _ eliminations -> foldMap eliminationInternalFeatures eliminations
+  Agda.DontCare term -> termInternalFeatures term
+  Agda.Dummy _ eliminations -> foldMap eliminationInternalFeatures eliminations
+
+eliminationInternalFeatures :: Agda.Elim -> Set.Set Core.Feature
+eliminationInternalFeatures = \case
+  Agda.Apply argument -> termInternalFeatures (Agda.unArg argument)
+  Agda.Proj _ _ -> Set.empty
+  Agda.IApply left right interval ->
+    Set.insert
+      Core.Cubical
+      ( termInternalFeatures left
+          <> termInternalFeatures right
+          <> termInternalFeatures interval
+      )
+
+sortInternalFeatures :: Agda.Sort -> Set.Set Core.Feature
+sortInternalFeatures = \case
+  Agda.Type level -> levelInternalFeatures level
+  Agda.Prop level -> levelInternalFeatures level
+  Agda.SSet level -> levelInternalFeatures level
+  Agda.Inf _ _ -> Set.empty
+  Agda.SizeUniv -> Set.empty
+  Agda.LockUniv -> Set.empty
+  Agda.LevelUniv -> Set.empty
+  Agda.IntervalUniv -> Set.singleton Core.Cubical
+  Agda.PiSort domain sort' abstraction ->
+    termInternalFeatures (Agda.unDom domain)
+      <> sortInternalFeatures sort'
+      <> sortInternalFeatures (Agda.unAbs abstraction)
+  Agda.FunSort left right ->
+    sortInternalFeatures left <> sortInternalFeatures right
+  Agda.UnivSort sort' -> sortInternalFeatures sort'
+  Agda.MetaS _ eliminations -> foldMap eliminationInternalFeatures eliminations
+  Agda.DefS _ eliminations -> foldMap eliminationInternalFeatures eliminations
+  Agda.DummyS _ -> Set.empty
+
+levelInternalFeatures :: Agda.Level -> Set.Set Core.Feature
+levelInternalFeatures (Agda.Max _ atoms) =
+  foldMap
+    (\(Agda.Plus _ atom) -> termInternalFeatures atom)
+    atoms
 
 termGlobalNames :: Agda.Term -> Set.Set Core.CanonicalName
 termGlobalNames = \case
