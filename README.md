@@ -70,3 +70,9 @@ flowchart TD
     end
 
 ```
+
+
+Please see
+https://github.com/lyphyser/lean2agda
+https://github.com/agda/agda
+https://github.com/leanprover/lean4
