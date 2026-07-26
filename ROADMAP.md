@@ -1,5 +1,21 @@
 The strongest architecture is a **proof-producing, typed IR pipeline with native implementations on both sides**. The IR coordinates meaning and dependencies; it is not itself trusted. Agda and Lean independently kernel-check the resulting declarations.
 
+## Implementation status
+
+The first Phase 0/1 tranche is now implemented:
+
+- strict typed Haskell Core IR represented as a term DAG;
+- deterministic versioned canonical CBOR codec;
+- SHA-256 semantic object identities;
+- SQLite catalog in WAL mode with immutable objects and module heads;
+- normalized declaration, import and direct-dependency indexes;
+- CLI initialization, ingestion, extraction, inspection and verification;
+- codec determinism, round-trip, deduplication and corruption tests.
+
+JSON is not used as an authoritative format. Human inspection is through
+stable CLI reports; machine access is through SQLite queries and canonical
+CBOR.
+
 ## Architecture
 
 ```mermaid
@@ -485,7 +501,9 @@ The generated receipt should be machine-readable and human-readable.
 
 3. **Canonical serialization specification**
 
-   * Versioned canonical JSON.
+   * Versioned canonical CBOR.
+   * SQLite/WAL operational catalog.
+   * Content-addressed immutable module objects.
    * Stable qualified names and binder IDs.
    * Semantic hashes.
    * Deterministic key and declaration ordering.

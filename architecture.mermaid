@@ -15,6 +15,14 @@ flowchart TD
         MR --> FP
     end
 
+    subgraph Persistence["Deterministic persistence"]
+        CB["Canonical CBOR"]
+        HS["Semantic object hash"]
+        DB["SQLite WAL catalog"]
+        IR --> CB --> HS --> DB
+        DB --> FP
+    end
+
     subgraph Lowering["Translation planning"]
         EQ["Portable lowering"]
         OB["Lean obligations"]

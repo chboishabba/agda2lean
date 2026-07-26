@@ -1,0 +1,7 @@
+packages: .
+
+tests: True
+documentation: False
+
+package agda2lean
+  ghc-options: -O2
