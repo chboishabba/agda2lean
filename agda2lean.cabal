@@ -6,7 +6,7 @@ license:            BSD-3-Clause
 build-type:         Simple
 
 flag agda-backend
-    description: Build the version-pinned Agda 2.8 elaboration backend
+    description: Build the version-pinned Agda 2.9 elaboration backend
     default: False
     manual: True
 extra-source-files:
@@ -15,8 +15,12 @@ extra-source-files:
     ROADMAP.md
     docs/adr/0001-storage-and-canonical-encoding.md
     docs/adr/0002-elaborated-extraction-and-lean-facades.md
+    cabal.project.agda-2.9
+    fixtures/dashi-mirrors.toml
+    lean/Agda2Lean/Manifest.lean
     schema/catalog.sql
     test/agda/Identity.agda
+    test/agda/LocalRewrite.agda
 
 common warnings
     ghc-options:
@@ -42,6 +46,7 @@ library
         Agda2Lean.Hash
         Agda2Lean.IR
         Agda2Lean.Lean.Emit
+        Agda2Lean.Mirror.Manifest
         Agda2Lean.Render
     build-depends:
         base >=4.17 && <5,
@@ -80,7 +85,7 @@ executable agda2lean-agda
     else
         buildable: False
     build-depends:
-        Agda >=2.8 && <2.9,
+        Agda ==2.9.0,
         agda2lean,
         base >=4.17 && <5,
         bytestring >=0.11,
@@ -98,6 +103,7 @@ test-suite agda2lean-test
     other-modules:
         AgdaFixture
         Fixture
+        MirrorManifest
     build-depends:
         agda2lean,
         base >=4.17 && <5,

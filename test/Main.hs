@@ -21,6 +21,7 @@ import qualified Data.Vector as Vector
 import Data.Word (Word8)
 import Database.SQLite.Simple (Only (..), close, execute, open, query_)
 import Fixture
+import MirrorManifest (mirrorManifestTests)
 import System.FilePath ((</>))
 import System.IO.Temp (withSystemTempDirectory)
 import Test.Tasty (TestTree, defaultMain, testGroup)
@@ -34,6 +35,7 @@ main =
         [ codecTests
         , extractionTests
         , leanEmitterTests
+        , mirrorManifestTests
         , validationTests
         , classificationTests
         , catalogTests

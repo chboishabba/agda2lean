@@ -25,11 +25,13 @@ The first two vertical tranches provide:
 - a transactional SQLite/WAL catalog;
 - normalized declaration and direct-dependency indexes;
 - CLI initialization, ingestion, extraction, inspection and verification;
-- an Agda 2.8 compiler backend that consumes typechecked internal syntax;
+- an exact-revision Agda 2.9 compiler backend that consumes typechecked internal syntax;
 - a version-independent elaboration snapshot and de Bruijn-safe DAG extractor;
 - direct-dependency and feature discovery from elaborated terms;
+- Agda 2.9 `@rewrite` and Cubical boundary detection;
 - an Agda-shaped Lean facade emitter with escaped original names;
 - explicit reconstruction diagnostics and a fail-closed emission mode;
+- a pinned DASHI Agda/Lean mirror registry and parallel Moonshine smoke test;
 - round-trip, determinism, deduplication and corruption tests.
 
 JSON is deliberately absent from the authoritative path. SQLite is the
@@ -42,12 +44,14 @@ the human inspection surface.
 cabal build all
 cabal test all
 
-# Build the version-pinned Agda backend when Agda 2.8 is installed.
-cabal build -fagda-backend agda2lean-agda
+# Build the exact-revision Agda 2.9 backend.
+cabal --project-file=cabal.project.agda-2.9 build \
+  -fagda-backend agda2lean-agda
 
 # Typecheck a real Agda module and emit canonical IR under build/ir/.
-cabal run -fagda-backend agda2lean-agda -- \
-  --lean-ir --compile-dir build/ir path/to/Module.agda
+cabal --project-file=cabal.project.agda-2.9 run \
+  -fagda-backend agda2lean-agda -- \
+  -j2 --lean-ir --compile-dir build/ir path/to/Module.agda
 
 cabal run agda2lean -- init --database build/catalog.sqlite
 cabal run agda2lean -- put-module \
@@ -71,6 +75,14 @@ cabal run agda2lean -- emit-lean \
 
 `put-module` validates and re-encodes the supplied object before storing it, so
 non-canonical or trailing input cannot acquire an authoritative object hash.
+
+The DASHI mirror fixtures pin both repositories by commit. CI checks independent
+fixtures in separate jobs; Agda's own import elaboration is bounded at `-j2` to
+avoid exchanging a modest speedup for unbounded peak memory.
+`fixtures/dashi-mirrors.toml` is the reviewed source of theorem/name mappings
+and expected fidelity blocks. `lean/Agda2Lean/Manifest.lean` emits deterministic
+direct type/value references and transitive Lean axiom closures for the next
+comparison tranche.
 
 See [PLANNING.md](PLANNING.md), [ROADMAP.md](ROADMAP.md),
 [ADR 0001](docs/adr/0001-storage-and-canonical-encoding.md), and

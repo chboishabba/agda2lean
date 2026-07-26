@@ -7,7 +7,7 @@ The storage/core and first compiler-facing vertical slices are implemented.
 The repository now contains:
 
 - the typed DAG IR, canonical CBOR v2 and SQLite/WAL catalog;
-- a custom Agda 2.8 backend that receives typechecked `Definition` values;
+- a custom, exact-revision Agda 2.9 backend that receives typechecked `Definition` values;
 - a stable elaboration snapshot insulating the core from Agda API changes;
 - de Bruijn-safe normalization, term interning, dependency extraction and
   feature classification;
