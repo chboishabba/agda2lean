@@ -1,5 +1,12 @@
 # agda2lean
 it's in the name
+
+
+Please see PLANNING.md for implementation reference :)
+
+
+
+Diagram:
 ```mermaid
 flowchart TD
     subgraph Source["Source and extraction"]
