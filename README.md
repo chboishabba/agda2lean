@@ -2,7 +2,7 @@
 it's in the name
 
 
-Please see PLANNING.md for implementation reference :)
+Please see PLANNING.md for implementation reference and ROADMAP.md for phase plan :)
 
 
 
