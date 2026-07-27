@@ -2,11 +2,15 @@
 
 module Main (main) where
 
-import Agda2Lean.IR (BuiltinId (..))
+import Agda2Lean.IR
+import Agda2Lean.Lean.Checked (emitLeanModuleChecked)
+import Agda2Lean.Lean.Emit
 import Agda2Lean.Platform
 import Agda2Lean.Registry.File (parseRegistryLayer, renderRegistryLayer)
 import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
 import qualified Data.Text as Text
+import qualified Data.Vector as Vector
 import Test.Tasty (TestTree, defaultMain, testGroup)
 import Test.Tasty.HUnit
 
@@ -19,6 +23,7 @@ main =
         , compatibilityTests
         , compositionTests
         , registryFileTests
+        , checkedEmissionTests
         , determinismTests
         ]
     )
@@ -158,6 +163,48 @@ registryFileTests =
         , "builtin-id\tagda-binding\tlean-target\trule\tcomputation\taxiom-effect\taxiom-delta\tentity-kind"
         , "BuiltinDoesNotExist\tX\tX\texact\tNativeDefinitional\tNoAxioms\t-\tBuiltinFunction"
         ]
+
+checkedEmissionTests :: TestTree
+checkedEmissionTests =
+  testGroup
+    "checked emission"
+    [ testCase "missing mapping blocks an otherwise native builtin" $
+        case
+            emitLeanModuleChecked
+              currentVersionContext
+              defaultEmitOptions {emitRegistry = Map.empty}
+              builtinNatDeclarationModule
+          of
+            Left message ->
+              assertBool
+                "missing registry coverage was not explained"
+                ("BuiltinNat" `Text.isInfixOf` message)
+            Right _ -> assertFailure "BuiltinNat emitted without an effective mapping"
+    ]
+
+builtinNatDeclarationModule :: ModuleIR
+builtinNatDeclarationModule =
+  ModuleIR
+    { moduleSchemaVersion = currentSchemaVersion
+    , moduleName = CanonicalName "Agda.Builtin.Nat"
+    , moduleImports = Set.empty
+    , moduleTerms = Map.empty
+    , moduleDeclarations =
+        Vector.singleton
+          CoreDeclaration
+            { declarationName = CanonicalName "Agda.Builtin.Nat.Nat"
+            , declarationBuiltin = Just BuiltinNat
+            , declarationRole = ComputationalData
+            , declarationUniverses = Vector.empty
+            , declarationModuleParameters = Vector.empty
+            , declarationType = TermId 0
+            , declarationBody = Nothing
+            , declarationDependencies = Set.empty
+            , declarationFeatures = Set.empty
+            , declarationSource = SourceSpan "Agda/Builtin/Nat.agda" 1 1
+            , declarationMapping = Exact
+            }
+    }
 
 determinismTests :: TestTree
 determinismTests =
