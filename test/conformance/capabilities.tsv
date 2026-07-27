@@ -1,0 +1,27 @@
+capability	phase	current-status	required-vertical-slice
+parameterized-datatypes	structural	reconstruction-boundary	declaration IR; constructor lowering; body correspondence
+records-and-projections	structural	reconstruction-boundary	record metadata; projection lowering; eta policy; oracle
+pattern-matching	structural	reconstruction-boundary	typed clauses; patterns; coverage; equation lowering
+nested-namespaces	structural	reconstruction-boundary	canonical naming; contained-body oracle
+implicit-arguments	structural	reconstruction-boundary	binder visibility; body lowering; oracle
+instance-arguments	structural	reconstruction-boundary	instance binder; synthesis policy; oracle
+mutual-definitions	structural	reconstruction-boundary	mutual block IR; dependency SCC; termination evidence
+local-modules	structural	reconstruction-boundary	module parameters; instantiation; namespace ownership
+structural-recursion	computation	reconstruction-boundary	clause extraction; decreasing argument; Lean equations; reduction oracle
+nested-recursion	computation	unclassified	well-founded measure or native recursor; termination receipt
+dependent-pattern-matching	computation	reconstruction-boundary	motive; equality refinements; dependent match lowering
+with-abstraction	computation	reconstruction-boundary	generated helper preservation; dependency and name stability
+irrelevance-and-erasure	computation	reconstruction-boundary	relevance semantics; proved erasure; receipt
+unit-family	builtins	deliberately-unsupported	BuiltinIds; Agda bindings; codec; registry; lowering; receipt; oracle
+sigma-family	builtins	deliberately-unsupported	BuiltinIds; Agda bindings; codec; registry; lowering; receipt; oracle
+list-family	builtins	deliberately-unsupported	BuiltinIds; Agda bindings; codec; registry; lowering; map/length oracle
+maybe-family	builtins	deliberately-unsupported	BuiltinIds; Agda bindings; codec; registry; lowering; receipt; oracle
+integer-family	builtins	deliberately-unsupported	BuiltinIds; constructors; literals; codec; registry; lowering; oracle
+char-string-families	builtins	deliberately-unsupported	BuiltinIds; literal preservation; registry; lowering; oracle
+fromnat-fromneg-fromstring	builtins	deliberately-unsupported	conversion identities; elaboration binding; typeclass correspondence
+rewrite-rules	semantic-extension	deliberately-unsupported	RewriteRule IR; orientation; theorem-backed lowering; simp policy
+sized-types	semantic-extension	deliberately-unsupported	size IR; proved erasure or encoding; variance; termination
+coinduction	semantic-extension	deliberately-unsupported	guarded observations; productivity; bisimulation correspondence
+io	semantic-extension	deliberately-unsupported	IO identities; effect mapping; sequencing; foreign-call trust policy
+reflection	semantic-extension	deliberately-unsupported	elaborated-result policy or reviewed Lean metaprogram bridge
+cubical	semantic-extension	deliberately-unsupported	interval; paths; transport; composition; axiom delta or constructive model
