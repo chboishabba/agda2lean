@@ -9,7 +9,7 @@ Agda elaborated binding
   -> BuiltinId
   -> canonical CBOR
   -> validated registry composition
-  -> Lean lowering
+  -> checked Lean lowering
   -> semantic receipt
 ```
 
@@ -19,16 +19,16 @@ The public registry label remains `lean4-platform-v1` for compatibility with cod
 
 The Agda 2.9 backend is deliberately target-neutral. It queries Agda's active elaborated builtin environment, records canonical `BuiltinId` values in the IR, and writes codec-v3 CBOR. It does **not** load Lean registry files: doing so would couple source-language extraction to one target platform and would make the same CBOR non-portable.
 
-Registry files are therefore loaded and validated at the production `emit-lean` boundary, where Lean policy is actually selected. Before any Lean or receipt output is written, the CLI:
+Registry files are loaded and validated at the production `emit-lean` boundary, where Lean policy is actually selected. Before any Lean or receipt output is written, `emitLeanModuleChecked` and the CLI:
 
-1. checks the codec/registry/receipt/Agda/Lean compatibility tuple;
-2. loads all requested layers;
-3. validates deterministic composition;
-4. verifies that the effective registry covers every builtin encountered in the module;
-5. emits with that effective registry;
-6. verifies one semantic receipt per encountered builtin decision.
+1. check the codec/registry/receipt/Agda/Lean compatibility tuple;
+2. load all requested layers;
+3. validate deterministic composition;
+4. verify that the effective registry covers every builtin encountered in the module;
+5. emit with that effective registry;
+6. verify one semantic receipt per encountered builtin decision.
 
-This is the completed backend integration contract: the Agda backend supplies semantic identities, while the Lean backend consumes an explicitly composed target registry. There is no hidden platform lookup between those boundaries.
+This is the completed backend integration contract: the Agda backend supplies semantic identities, while the Lean backend consumes an explicitly composed target registry. There is no hidden target-policy decision in source extraction.
 
 ## Complete current inventory
 
@@ -44,16 +44,17 @@ The lowering surface is exactly the `BuiltinId` enumeration. `builtinCoverageInv
 
 `renderBuiltinCoverageInventory` provides deterministic TSV output. A future Agda builtin is not inferred from its printed name: it must first receive an explicit `BuiltinId`, inventory classification, and registry rule or an explicit blocked status.
 
-The broader Agda 2.9 declaration universe is audited by `scripts/check-agda-builtin-inventory.sh`. It reads `Agda.Syntax.Builtin` from the pinned Cabal source cache (or `AGDA_SOURCE_DIR`) and reports all 313 upstream `BuiltinId` and `PrimitiveId` entries.
+The broader Agda 2.9 declaration universe is audited by `scripts/check-agda-builtin-inventory.sh`. It reads `Agda.Syntax.Builtin` from the pinned Cabal source cache (or `AGDA_SOURCE_DIR`) and reports all upstream `BuiltinId` and `PrimitiveId` constructors. The script counts both the first `= Constructor` and subsequent `| Constructor` forms.
 
-The coverage decision is explicit:
+For pinned Agda revision `7347b801ef73906219e5b10453c871ccc1e1c8ac`, the authoritative inventory is:
 
-- 18 currently recognised semantic identities are represented by the language-neutral IR and platform registry;
-- the remaining 295 upstream names are `unsupported-or-unmapped` and are outside the current translation contract;
-- they are not silently accepted, name-matched, or assigned placeholder `BuiltinId` values;
-- promotion requires a reviewed semantic identity, entity kind, computation treatment, axiom effect, extraction binding, lowering rule, and tests.
+- 315 upstream builtin/primitive constructors;
+- 19 registered semantic identities represented by the language-neutral IR and backend binding table;
+- 296 entries explicitly classified as `unsupported-or-unmapped` and outside the current translation contract.
 
-An explicitly unsupported entry is safer than a nominal mapping with no established cross-language semantics.
+The earlier 313/18/295 report omitted the first constructor of each upstream enum and is superseded.
+
+Unsupported entries are not silently accepted, name-matched, or assigned placeholder `BuiltinId` values. Promotion requires a reviewed semantic identity, entity kind, computation treatment, axiom effect, extraction binding, lowering rule, and tests. An explicitly unsupported entry is safer than a nominal mapping with no established cross-language semantics.
 
 ## Registry layers
 
@@ -73,7 +74,7 @@ Layers are validated semantic scopes:
 - fixture mappings in production mode;
 - mapping/layer scope inconsistencies.
 
-Composition is deterministic with respect to map and rule insertion order. The Lean emitter receives the resulting effective `Map BuiltinId PlatformMapping` through `EmitOptions`; the production CLI additionally checks complete coverage before invoking it.
+Composition is deterministic with respect to map and rule insertion order. The Lean emitter receives the resulting effective `Map BuiltinId PlatformMapping` through `EmitOptions`; `emitLeanModuleChecked` verifies complete coverage and receipt cardinality before returning output.
 
 ### Registry file format
 
@@ -114,7 +115,7 @@ Because every current `BuiltinId` is platform-protected, current library and pro
 - Agda backend version;
 - Lean target platform.
 
-`checkVersionCompatibility` returns `Compatible`, `MigrationRequired`, or `Incompatible`. Semantic version skew is checked before translation and is fail-closed rather than warning-only.
+`checkVersionCompatibility` returns `Compatible`, `MigrationRequired`, or `Incompatible`. Semantic version skew is checked by `emitLeanModuleChecked` before translation and is fail-closed rather than warning-only.
 
 ## Receipt completeness and provenance
 
@@ -124,14 +125,16 @@ For every module:
 encountered builtin declarations == emitted builtin receipt rows
 ```
 
-The production CLI verifies this equality before writing output. It also refuses to emit if any encountered `BuiltinId` is absent from the effective registry.
+Checked emission verifies this equality and refuses to emit if any encountered `BuiltinId` is absent from the effective registry.
 
 Receipt headers bind:
 
 - receipt schema;
 - codec version;
 - nominal registry version;
-- SHA-256 digest of the complete effective registry;
+- SHA-256 digest of the complete effective registry bundle;
+- every layer name, version and scope through that digest;
+- canonicalised layer and rule ordering;
 - Agda backend version;
 - Lean target.
 
@@ -143,7 +146,7 @@ Builtin receipts should be required in correspondence gates, release verificatio
 
 Generated Lean, CBOR, temporary comparison workspaces, and ad-hoc receipt files are reproducible build products and should remain ignored. Only reviewed golden fixtures and selected durable audit examples belong in version control.
 
-The hardening tests exercise complete inventory coverage, protected mappings, duplicate/conflict rejection, production fixture rejection, version skew, registry digest shape, insertion-order determinism, registry-file round-tripping, and invalid identifier rejection.
+The hardening tests exercise complete inventory coverage, protected mappings, duplicate/conflict rejection, production fixture rejection, version skew, registry digest shape, insertion-order determinism, registry-file round-tripping, invalid identifier rejection, and fail-closed checked emission for a normally native builtin.
 
 ## Agda 2.9 validation entrypoint
 
