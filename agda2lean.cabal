@@ -11,6 +11,7 @@ extra-source-files:
     ROADMAP.md
     docs/BUILTIN_REGISTRY.md
     docs/CONFORMANCE.md
+    docs/SUPPORT_MATRIX.md
     docs/adr/0001-storage-and-canonical-encoding.md
     docs/adr/0002-elaborated-extraction-and-lean-facades.md
     cabal.project.agda-2.9
@@ -19,6 +20,7 @@ extra-source-files:
     scripts/check-agda-backend.sh
     scripts/check-comparison.sh
     scripts/check-conformance-corpus.sh
+    scripts/check-conformance-manifest.sh
     scripts/check-monsterstate-correspondence.sh
     scripts/check-moonshine-correspondence.sh
     scripts/render-support-matrix.sh
@@ -28,6 +30,7 @@ extra-source-files:
     schema/catalog.sql
     test/agda/Identity.agda
     test/agda/LocalRewrite.agda
+    test/conformance/capabilities.tsv
     test/conformance/manifest.tsv
     test/conformance/Structural/ParameterizedDatatype.agda
     test/conformance/Structural/Record.agda
