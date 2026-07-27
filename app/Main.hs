@@ -6,15 +6,18 @@ module Main (main) where
 import Agda2Lean.Catalog
 import Agda2Lean.Classify (classifyModule)
 import Agda2Lean.Codec (decodeModule, encodeModule)
-import Agda2Lean.Hash (renderObjectHash)
-import Agda2Lean.IR (CanonicalName (..))
+import Agda2Lean.Hash (hashBytes, renderObjectHash)
+import Agda2Lean.IR (CanonicalName (..), CoreDeclaration (..), ModuleIR (..))
 import Agda2Lean.Lean.Emit
 import Agda2Lean.Platform
+import Agda2Lean.Registry.File (loadRegistryLayer)
 import Agda2Lean.Render
 import Control.Exception (bracket)
 import Control.Monad (unless)
 import qualified Data.ByteString as ByteString
+import qualified Data.Map.Strict as Map
 import qualified Data.Text as Text
+import qualified Data.Text.Encoding as TextEncoding
 import qualified Data.Text.IO as Text
 import qualified Data.Vector as Vector
 import Options.Applicative
@@ -28,13 +31,20 @@ data Command
   | PutModule GlobalOptions FilePath
   | Classify FilePath FilePath
   | GetModule GlobalOptions Text.Text FilePath
-  | EmitLean FilePath FilePath FilePath (Maybe FilePath) Bool
+  | EmitLean FilePath FilePath FilePath (Maybe FilePath) RegistryOptions Bool
   | BuiltinInventory FilePath
   | Inspect GlobalOptions (Maybe Text.Text)
   | Verify GlobalOptions
 
 newtype GlobalOptions = GlobalOptions
   { databasePath :: FilePath
+  }
+
+data RegistryOptions = RegistryOptions
+  { libraryRegistryPaths :: [FilePath]
+  , projectRegistryPaths :: [FilePath]
+  , fixtureRegistryPaths :: [FilePath]
+  , registryTestMode :: Bool
   }
 
 main :: IO ()
@@ -103,6 +113,35 @@ moduleOption =
     <$> strOption
       (long "module" <> short 'm' <> metavar "NAME" <> help "Canonical module name")
 
+registryOptionsParser :: Parser RegistryOptions
+registryOptionsParser =
+  RegistryOptions
+    <$> many
+      ( strOption
+          ( long "library-registry"
+              <> metavar "PATH"
+              <> help "LibraryScope registry TSV; may be repeated"
+          )
+      )
+    <*> many
+      ( strOption
+          ( long "project-registry"
+              <> metavar "PATH"
+              <> help "ProjectScope registry TSV; may be repeated"
+          )
+      )
+    <*> many
+      ( strOption
+          ( long "fixture-registry"
+              <> metavar "PATH"
+              <> help "FixtureOnly registry TSV; requires --registry-test-mode"
+          )
+      )
+    <*> switch
+      ( long "registry-test-mode"
+          <> help "Permit FixtureOnly registry layers"
+      )
+
 emitLeanParser :: Parser Command
 emitLeanParser =
   EmitLean
@@ -116,6 +155,7 @@ emitLeanParser =
               <> help "Optional provenance-bound builtin semantic receipt file"
           )
       )
+    <*> registryOptionsParser
     <*> switch
       ( long "fail-on-reconstruction"
           <> help "Do not emit sorry at reconstruction boundaries"
@@ -129,20 +169,30 @@ runCommand (Classify inputPath outputPath) = do
   ByteString.writeFile outputPath (encodeModule (classifyModule moduleIR))
 runCommand (BuiltinInventory outputPath) =
   writeTextAtomic outputPath (inventoryBundle renderBuiltinCoverageInventory)
-runCommand (EmitLean inputPath leanPath diagnosticsPath receiptPath failOnReconstruction) = do
+runCommand (EmitLean inputPath leanPath diagnosticsPath receiptPath registryOptions failOnReconstruction) = do
   ensureCompatible currentVersionContext
+  effectiveRegistry <- loadEffectiveRegistry registryOptions
   bytes <- ByteString.readFile inputPath
   moduleIR <- either (ioError . userError . Text.unpack) pure (decodeModule bytes)
   let output =
         emitLeanModule
-          defaultEmitOptions {emitSorryBodies = not failOnReconstruction}
+          defaultEmitOptions
+            { emitSorryBodies = not failOnReconstruction
+            , emitRegistry = effectiveRegistry
+            }
           moduleIR
+  ensureReceiptComplete moduleIR output
   writeTextAtomic leanPath (leanSource output)
   writeTextAtomic diagnosticsPath (renderDiagnostics (leanDiagnostics output))
   case receiptPath of
     Nothing -> pure ()
     Just path ->
-      writeTextAtomic path (receiptBundle (renderBuiltinReceipts (leanBuiltinReceipts output)))
+      writeTextAtomic
+        path
+        ( receiptBundle
+            (effectiveRegistryDigest effectiveRegistry)
+            (renderBuiltinReceipts (leanBuiltinReceipts output))
+        )
   whenErrors (leanDiagnostics output)
 runCommand command' = do
   let options = commandOptions command'
@@ -186,7 +236,7 @@ runCommand command' = do
         Text.putStr (renderCatalogIssues issues)
         unless (null issues) exitFailure
       Classify _ _ -> ioError (userError "internal error: classify opened the catalog")
-      EmitLean _ _ _ _ _ -> ioError (userError "internal error: emit-lean opened the catalog")
+      EmitLean _ _ _ _ _ _ -> ioError (userError "internal error: emit-lean opened the catalog")
       BuiltinInventory _ -> ioError (userError "internal error: builtin-inventory opened the catalog")
 
 commandOptions :: Command -> GlobalOptions
@@ -194,28 +244,83 @@ commandOptions = \case
   Init options -> options
   PutModule options _ -> options
   Classify _ _ -> error "classify does not use a catalog"
-  EmitLean _ _ _ _ _ -> error "emit-lean does not use a catalog"
+  EmitLean _ _ _ _ _ _ -> error "emit-lean does not use a catalog"
   BuiltinInventory _ -> error "builtin-inventory does not use a catalog"
   GetModule options _ _ -> options
   Inspect options _ -> options
   Verify options -> options
 
-receiptBundle :: Text.Text -> Text.Text
-receiptBundle body = provenanceHeader <> body
+loadEffectiveRegistry :: RegistryOptions -> IO (Map.Map BuiltinId PlatformMapping)
+loadEffectiveRegistry options = do
+  libraryLayers <- traverse (loadRegistryLayer LibraryScope) (libraryRegistryPaths options)
+  projectLayers <- traverse (loadRegistryLayer ProjectScope) (projectRegistryPaths options)
+  fixtureLayers <- traverse (loadRegistryLayer FixtureOnly) (fixtureRegistryPaths options)
+  let mode = if registryTestMode options then TestMode else ProductionMode
+      layers = platformRegistryLayer : libraryLayers <> projectLayers <> fixtureLayers
+  either
+    (ioError . userError . unlines . map show)
+    pure
+    (composeRegistryLayers mode layers)
+
+ensureReceiptComplete :: ModuleIR -> LeanOutput -> IO ()
+ensureReceiptComplete moduleIR output =
+  let encountered =
+        length
+          [ ()
+          | declaration <- Vector.toList (moduleDeclarations moduleIR)
+          , Just _ <- [declarationBuiltin declaration]
+          ]
+      recorded = Vector.length (leanBuiltinReceipts output)
+   in unless (encountered == recorded) $
+        ioError
+          ( userError
+              ( "builtin receipt completeness failure: encountered "
+                  <> show encountered
+                  <> ", recorded "
+                  <> show recorded
+              )
+          )
+
+receiptBundle :: Text.Text -> Text.Text -> Text.Text
+receiptBundle registryDigest body = provenanceHeader registryDigest <> body
 
 inventoryBundle :: Text.Text -> Text.Text
-inventoryBundle body = provenanceHeader <> body
+inventoryBundle body = provenanceHeader platformRegistryDigest <> body
 
-provenanceHeader :: Text.Text
-provenanceHeader =
+provenanceHeader :: Text.Text -> Text.Text
+provenanceHeader registryDigest =
   Text.unlines
     [ "# receipt-schema\t" <> Text.pack (show receiptSchemaVersion)
     , "# codec\t" <> Text.pack (show (versionCodec currentVersionContext))
     , "# registry\t" <> platformRegistryVersion
-    , "# registry-digest\t" <> platformRegistryDigest
+    , "# registry-digest\t" <> registryDigest
     , "# agda-backend\t" <> versionAgdaBackend currentVersionContext
     , "# lean-target\t" <> versionLeanTarget currentVersionContext
     ]
+
+effectiveRegistryDigest :: Map.Map BuiltinId PlatformMapping -> Text.Text
+effectiveRegistryDigest registry =
+  renderObjectHash
+    ( hashBytes
+        ( TextEncoding.encodeUtf8
+            ( Text.unlines
+                [ Text.intercalate
+                    "\t"
+                    [ Text.pack (show builtin)
+                    , platformAuditName mapping
+                    , platformTarget mapping
+                    , platformMode mapping
+                    , Text.pack (show (platformComputation mapping))
+                    , Text.pack (show (platformAxiomEffect mapping))
+                    , Text.intercalate "," (platformAxiomDelta mapping)
+                    , Text.pack (show (platformEntityKind mapping))
+                    , Text.pack (show (platformScope mapping))
+                    ]
+                | (builtin, mapping) <- Map.toAscList registry
+                ]
+            )
+        )
+    )
 
 ensureCompatible :: VersionContext -> IO ()
 ensureCompatible context =
