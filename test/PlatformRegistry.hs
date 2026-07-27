@@ -168,7 +168,7 @@ checkedEmissionTests :: TestTree
 checkedEmissionTests =
   testGroup
     "checked emission"
-    [ testCase "missing mapping blocks an otherwise native builtin" $
+    [ testCase "missing declaration mapping blocks an otherwise native builtin" $
         case
             emitLeanModuleChecked
               currentVersionContext
@@ -177,9 +177,38 @@ checkedEmissionTests =
           of
             Left message ->
               assertBool
-                "missing registry coverage was not explained"
+                "missing declaration registry coverage was not explained"
                 ("BuiltinNat" `Text.isInfixOf` message)
-            Right _ -> assertFailure "BuiltinNat emitted without an effective mapping"
+            Right _ -> assertFailure "BuiltinNat declaration emitted without an effective mapping"
+    , testCase "missing term mapping blocks the low-level renderer" $
+        case
+            emitLeanModuleChecked
+              currentVersionContext
+              defaultEmitOptions {emitRegistry = Map.empty}
+              builtinNatTermModule
+          of
+            Left message ->
+              assertBool
+                "missing term registry coverage was not explained"
+                ("BuiltinNat" `Text.isInfixOf` message)
+            Right _ -> assertFailure "BuiltinNat term rendered without an effective mapping"
+    , testCase "divergent term target is rejected before rendering" $
+        let divergentRegistry =
+              Map.adjust
+                (\mapping -> mapping {platformTarget = "FakeNat"})
+                BuiltinNat
+                platformMappings
+         in case
+              emitLeanModuleChecked
+                currentVersionContext
+                defaultEmitOptions {emitRegistry = divergentRegistry}
+                builtinNatTermModule
+              of
+                Left message ->
+                  assertBool
+                    "renderer divergence was not explained"
+                    ("term renderer" `Text.isInfixOf` message)
+                Right _ -> assertFailure "divergent effective target bypassed checked emission"
     ]
 
 builtinNatDeclarationModule :: ModuleIR
@@ -202,6 +231,30 @@ builtinNatDeclarationModule =
             , declarationDependencies = Set.empty
             , declarationFeatures = Set.empty
             , declarationSource = SourceSpan "Agda/Builtin/Nat.agda" 1 1
+            , declarationMapping = Exact
+            }
+    }
+
+builtinNatTermModule :: ModuleIR
+builtinNatTermModule =
+  ModuleIR
+    { moduleSchemaVersion = currentSchemaVersion
+    , moduleName = CanonicalName "Example.BuiltinTerm"
+    , moduleImports = Set.empty
+    , moduleTerms = Map.singleton (TermId 0) (Builtin BuiltinNat)
+    , moduleDeclarations =
+        Vector.singleton
+          CoreDeclaration
+            { declarationName = CanonicalName "Example.BuiltinTerm.value"
+            , declarationBuiltin = Nothing
+            , declarationRole = ComputationalFunction
+            , declarationUniverses = Vector.empty
+            , declarationModuleParameters = Vector.empty
+            , declarationType = TermId 0
+            , declarationBody = Nothing
+            , declarationDependencies = Set.empty
+            , declarationFeatures = Set.empty
+            , declarationSource = SourceSpan "Example/BuiltinTerm.agda" 1 1
             , declarationMapping = Exact
             }
     }
