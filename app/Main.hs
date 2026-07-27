@@ -7,7 +7,8 @@ import Agda2Lean.Catalog
 import Agda2Lean.Classify (classifyModule)
 import Agda2Lean.Codec (decodeModule, encodeModule)
 import Agda2Lean.Hash (hashBytes, renderObjectHash)
-import Agda2Lean.IR (BuiltinId, CanonicalName (..), CoreDeclaration (..), ModuleIR (..))
+import Agda2Lean.IR (BuiltinId, CanonicalName (..))
+import Agda2Lean.Lean.Checked (emitLeanModuleChecked)
 import Agda2Lean.Lean.Emit
 import Agda2Lean.Platform
 import Agda2Lean.Registry.File (loadRegistryLayer)
@@ -170,19 +171,19 @@ runCommand (Classify inputPath outputPath) = do
 runCommand (BuiltinInventory outputPath) =
   writeTextAtomic outputPath (inventoryBundle renderBuiltinCoverageInventory)
 runCommand (EmitLean inputPath leanPath diagnosticsPath receiptPath registryOptions failOnReconstruction) = do
-  ensureCompatible currentVersionContext
   effectiveRegistry <- loadEffectiveRegistry registryOptions
   bytes <- ByteString.readFile inputPath
   moduleIR <- either (ioError . userError . Text.unpack) pure (decodeModule bytes)
-  ensureRegistryCoversModule effectiveRegistry moduleIR
-  let output =
-        emitLeanModule
-          defaultEmitOptions
-            { emitSorryBodies = not failOnReconstruction
-            , emitRegistry = effectiveRegistry
-            }
-          moduleIR
-  ensureReceiptComplete moduleIR output
+  let emitOptions =
+        defaultEmitOptions
+          { emitSorryBodies = not failOnReconstruction
+          , emitRegistry = effectiveRegistry
+          }
+  output <-
+    either
+      (ioError . userError . Text.unpack)
+      pure
+      (emitLeanModuleChecked currentVersionContext emitOptions moduleIR)
   writeTextAtomic leanPath (leanSource output)
   writeTextAtomic diagnosticsPath (renderDiagnostics (leanDiagnostics output))
   case receiptPath of
@@ -263,43 +264,6 @@ loadEffectiveRegistry options = do
     pure
     (composeRegistryLayers mode layers)
 
-ensureRegistryCoversModule :: Map.Map BuiltinId PlatformMapping -> ModuleIR -> IO ()
-ensureRegistryCoversModule registry moduleIR =
-  case
-      [ builtin
-      | declaration <- Vector.toList (moduleDeclarations moduleIR)
-      , Just builtin <- [declarationBuiltin declaration]
-      , Map.notMember builtin registry
-      ]
-    of
-      [] -> pure ()
-      missing ->
-        ioError
-          ( userError
-              ( "effective registry does not cover encountered builtins: "
-                  <> unwords (map show missing)
-              )
-          )
-
-ensureReceiptComplete :: ModuleIR -> LeanOutput -> IO ()
-ensureReceiptComplete moduleIR output =
-  let encountered =
-        length
-          [ ()
-          | declaration <- Vector.toList (moduleDeclarations moduleIR)
-          , Just _ <- [declarationBuiltin declaration]
-          ]
-      recorded = Vector.length (leanBuiltinReceipts output)
-   in unless (encountered == recorded) $
-        ioError
-          ( userError
-              ( "builtin receipt completeness failure: encountered "
-                  <> show encountered
-                  <> ", recorded "
-                  <> show recorded
-              )
-          )
-
 receiptBundle :: Text.Text -> Text.Text -> Text.Text
 receiptBundle registryDigest body = provenanceHeader registryDigest <> body
 
@@ -340,13 +304,6 @@ effectiveRegistryDigest registry =
             )
         )
     )
-
-ensureCompatible :: VersionContext -> IO ()
-ensureCompatible context =
-  case checkVersionCompatibility context of
-    Compatible -> pure ()
-    MigrationRequired message -> ioError (userError (Text.unpack message))
-    Incompatible message -> ioError (userError (Text.unpack message))
 
 writeTextAtomic :: FilePath -> Text.Text -> IO ()
 writeTextAtomic path contents = do
