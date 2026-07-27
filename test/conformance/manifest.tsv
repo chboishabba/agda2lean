@@ -1,7 +1,7 @@
 id	source	expected	phase	features	oracle	rationale
 structural.parameterized-datatype	test/conformance/Structural/ParameterizedDatatype.agda	reconstruction-boundary	structural	datatype,parameters,constructors	-	statement shape is expected to extract; constructor bodies are not yet portable
 structural.record	test/conformance/Structural/Record.agda	reconstruction-boundary	structural	record,projection,constructor	-	record declarations and projection bodies require explicit lowering evidence
-structural.nested-namespace	test/conformance/Structural/NestedNamespace.agda	supported-correspondence	structural	namespace,module-name	-	canonical names and namespaces are already represented directly
+structural.nested-namespace	test/conformance/Structural/NestedNamespace.agda	reconstruction-boundary	structural	namespace,module-name	-	namespaces are represented but the contained function body still lacks a correspondence oracle
 structural.implicit-arguments	test/conformance/Structural/ImplicitArguments.agda	reconstruction-boundary	structural	implicit-binder,function	-	visibility is represented; function body reconstruction remains explicit
 structural.instance-arguments	test/conformance/Structural/InstanceArguments.agda	reconstruction-boundary	structural	instance-binder,record	-	instance visibility is represented but class synthesis correspondence is case-specific
 structural.mutual-definitions	test/conformance/Structural/MutualDefinitions.agda	reconstruction-boundary	structural	mutual,recursion	-	mutual clause bodies and termination structure need lowering
