@@ -38,6 +38,115 @@ JSON is deliberately absent from the authoritative path. SQLite is the
 queryable operational store, CBOR is the semantic encoding, and CLI reports are
 the human inspection surface.
 
+
+## Diagrams
+
+```mermaid
+flowchart TD
+    E["Shared algebra"] --> S["External normalizer"]
+    S --> C["Portable certificate"]
+    C --> A["Agda checker"]
+    C --> L["Lean checker"]
+    A --> PA["Agda theorem"]
+    L --> PL["Lean theorem"]
+```
+
+```mermaid
+flowchart TD
+    A["Agda source"] --> EA["Agda elaboration"]
+    EA --> IR["Typed DASHI Core IR"]
+    IR --> AF["Agda-shaped facade"]
+    IR --> LF["Lean-shaped facade"]
+    LF --> N["Mathlib / PhysLean implementation"]
+    IR --> C["Portable certificates"]
+    C --> AC["Agda checker"]
+    C --> LC["Lean checker"]
+```
+
+```mermaid
+flowchart TD
+    subgraph Source["Source and extraction"]
+        AS["Agda source"]
+        AE["Agda elaborator"]
+        EX["Haskell extractor"]
+        AS --> AE --> EX
+    end
+
+    subgraph Core["DASHI Core IR"]
+        IR["Typed declaration IR"]
+        MR["Mapping registry"]
+        FP["Feature classifier"]
+        EX --> IR
+        IR --> FP
+        MR --> FP
+    end
+
+    subgraph Lowering["Translation planning"]
+        EQ["Portable lowering"]
+        OB["Lean obligations"]
+        QX["Quarantined extensions"]
+        FP -->|Exact or encoded| EQ
+        FP -->|Reconstruct| OB
+        FP -->|Cubical or unsupported| QX
+    end
+
+    subgraph LeanSide["Lean realization"]
+        LF["Generated Agda-shaped facade"]
+        LN["Native Lean implementation"]
+        LA["Mathlib and PhysLean adapters"]
+        LI["Lean manifest extractor"]
+        EQ --> LF
+        OB --> LN
+        LA --> LN
+        LN --> LF
+        LF --> LI
+    end
+
+    subgraph Certificates["Portable automation"]
+        CS["Untrusted solver"]
+        CP["Portable certificate"]
+        AC["Agda checker"]
+        LC["Lean checker"]
+        CS --> CP
+        CP --> AC
+        CP --> LC
+    end
+
+    subgraph Verification["Correspondence and promotion"]
+        CE["Correspondence engine"]
+        DL["Dependency and axiom ledger"]
+        RC["Translation receipt"]
+        CI["Fail-closed CI gate"]
+        IR --> CE
+        LI --> CE
+        AC --> CE
+        LC --> CE
+        QX --> DL
+        CE --> DL --> RC --> CI
+    end
+```
+
+```mermaid
+flowchart TD
+    A["Agda 2.9 extraction"] --> I["Core IR"]
+    I --> M["Apply symbol mappings"]
+    M --> S["Lean statement"]
+    L["Elaborated Lean declaration"] --> C["Correspondence checker"]
+    S --> C
+    C --> D["Dependency and axiom comparison"]
+    D --> R["Pass, block, or obligation receipt"]
+```
+
+
+```mermaid
+flowchart LR
+    A["Agda builtin table"] --> I["Canonical builtin ID"]
+    I --> R["Versioned platform registry"]
+    R --> L["Generated Lean lowering"]
+    R --> V["Automatic verification"]
+```
+
+
 ## Commands
 
 ```bash
