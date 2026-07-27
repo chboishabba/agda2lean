@@ -8,6 +8,8 @@ build/
 *.sqlite-wal
 *.cbor
 *.agdai
+*.builtin-receipt.tsv
+*.builtin-inventory.tsv
 comparison/.lake/
 comparison/generated/
 result

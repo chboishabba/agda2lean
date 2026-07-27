@@ -32,6 +32,7 @@ import qualified Data.Vector as Vector
 data EmitOptions = EmitOptions
   { emitNamespace :: Bool
   , emitSorryBodies :: Bool
+  , emitRegistry :: Map BuiltinId PlatformMapping
   }
   deriving stock (Eq, Show)
 
@@ -40,6 +41,7 @@ defaultEmitOptions =
   EmitOptions
     { emitNamespace = True
     , emitSorryBodies = True
+    , emitRegistry = platformMappings
     }
 
 data DiagnosticSeverity = Info | Warning | Error
@@ -234,7 +236,7 @@ emitDeclaration options moduleIR declaration =
           )
 
     builtinReceipt builtin =
-      case lookupPlatformMapping builtin of
+      case Map.lookup builtin (emitRegistry options) of
         Nothing ->
           BuiltinReceipt
             { builtinReceiptDeclaration = declarationName declaration
