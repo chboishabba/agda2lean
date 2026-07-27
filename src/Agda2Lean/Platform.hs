@@ -68,8 +68,10 @@ data RegistryScope
 data RegistryMode = ProductionMode | TestMode
   deriving stock (Eq, Ord, Show)
 
+-- Keep the public label stable for codec-v3 receipts. Semantic identity is
+-- additionally bound to 'platformRegistryDigest'.
 platformRegistryVersion :: Text
-platformRegistryVersion = "lean4-platform-v2"
+platformRegistryVersion = "lean4-platform-v1"
 
 receiptSchemaVersion :: Word16
 receiptSchemaVersion = 2
@@ -94,13 +96,7 @@ data Compatibility
 
 currentVersionContext :: VersionContext
 currentVersionContext =
-  VersionContext
-    { versionCodec = codecVersion
-    , versionRegistry = platformRegistryVersion
-    , versionReceiptSchema = receiptSchemaVersion
-    , versionAgdaBackend = "2.9.0"
-    , versionLeanTarget = leanTargetVersion
-    }
+  VersionContext codecVersion platformRegistryVersion receiptSchemaVersion "2.9.0" leanTargetVersion
 
 checkVersionCompatibility :: VersionContext -> Compatibility
 checkVersionCompatibility context
@@ -161,12 +157,13 @@ composeRegistryLayers mode layers =
           | otherwise -> table
 
     compositionIssues = snd (foldl' inspectLayer (Map.empty, []) layers)
-    inspectLayer (seen, issues) layer =
-      foldl' (inspectRule layer) (seen, issues) (registryLayerMappings layer)
+    inspectLayer state layer = foldl' (inspectRule layer) state (registryLayerMappings layer)
     inspectRule layer (seen, issues) mapping =
       case Map.lookup builtin seen of
         Nothing -> (Map.insert builtin (registryLayerName layer, mapping) seen, issues)
         Just (owner, previous)
+          | platformEntityKind previous /= platformEntityKind mapping ->
+              (seen, KindMismatch builtin (platformEntityKind previous) (platformEntityKind mapping) : issues)
           | platformScope previous == PlatformProtected ->
               (seen, ProtectedOverride (registryLayerName layer) builtin : issues)
           | registryLayerScope layer == FixtureOnly && mode /= TestMode ->
@@ -188,11 +185,8 @@ composeRegistryLayers mode layers =
           , count > 1
           ]
         scopeIssues =
-          [ ScopeMismatch
-              (registryLayerName layer)
-              (platformBuiltin mapping)
-              (registryLayerScope layer)
-              (platformScope mapping)
+          [ ScopeMismatch (registryLayerName layer) (platformBuiltin mapping)
+              (registryLayerScope layer) (platformScope mapping)
           | mapping <- registryLayerMappings layer
           , platformScope mapping /= registryLayerScope layer
           ]
@@ -229,43 +223,24 @@ platformMappings = Map.fromList [(platformBuiltin mapping, mapping) | mapping <-
       ]
 
     entry builtin audit target mode kind =
-      PlatformMapping
-        { platformBuiltin = builtin
-        , platformAuditName = audit
-        , platformTarget = target
-        , platformMode = mode
-        , platformComputation = computationFor builtin
-        , platformAxiomEffect = NoAxioms
-        , platformAxiomDelta = []
-        , platformEntityKind = kind
-        , platformScope = PlatformProtected
-        }
+      PlatformMapping builtin audit target mode (computationFor builtin) NoAxioms [] kind PlatformProtected
 
-    computationFor builtin =
-      case builtin of
-        BuiltinEquality -> TheoremBacked
-        BuiltinRefl -> TheoremBacked
-        BuiltinNatEq -> TranslatedRecursive
-        BuiltinNatLt -> TranslatedRecursive
-        _ -> NativeDefinitional
+    computationFor BuiltinEquality = TheoremBacked
+    computationFor BuiltinRefl = TheoremBacked
+    computationFor BuiltinNatEq = TranslatedRecursive
+    computationFor BuiltinNatLt = TranslatedRecursive
+    computationFor _ = NativeDefinitional
 
 platformRegistryLayer :: RegistryLayer
 platformRegistryLayer =
-  RegistryLayer
-    { registryLayerName = "lean4-platform"
-    , registryLayerVersion = platformRegistryVersion
-    , registryLayerScope = PlatformProtected
-    , registryLayerMappings = Map.elems platformMappings
-    }
+  RegistryLayer "lean4-platform" platformRegistryVersion PlatformProtected (Map.elems platformMappings)
 
 platformRegistryDigest :: Text
-platformRegistryDigest =
-  renderObjectHash (hashBytes (TextEncoding.encodeUtf8 canonicalRegistryText))
+platformRegistryDigest = renderObjectHash (hashBytes (TextEncoding.encodeUtf8 canonicalRegistryText))
   where
     canonicalRegistryText =
       Text.unlines
-        [ Text.intercalate
-            "\t"
+        [ Text.intercalate "\t"
             [ Text.pack (show builtin)
             , platformAuditName mapping
             , platformTarget mapping
@@ -293,16 +268,9 @@ data BuiltinCoverage = BuiltinCoverage
 
 builtinCoverageInventory :: [BuiltinCoverage]
 builtinCoverageInventory =
-  [ BuiltinCoverage
-      { coverageBuiltin = builtin
-      , coverageAgdaKey = platformAuditName mapping
-      , coverageEntityKind = platformEntityKind mapping
-      , coverageStatus = "native"
-      , coverageLeanStrategy = platformMode mapping
-      , coverageComputation = platformComputation mapping
-      , coverageAxiomDelta = platformAxiomDelta mapping
-      , coverageOverrideAllowed = platformScope mapping /= PlatformProtected
-      }
+  [ BuiltinCoverage builtin (platformAuditName mapping) (platformEntityKind mapping)
+      "native" (platformMode mapping) (platformComputation mapping)
+      (platformAxiomDelta mapping) (platformScope mapping /= PlatformProtected)
   | builtin <- [minBound .. maxBound]
   , let mapping = platformMappings Map.! builtin
   ]
@@ -311,8 +279,7 @@ renderBuiltinCoverageInventory :: Text
 renderBuiltinCoverageInventory =
   Text.unlines
     ( "builtin-id\tagda-key\tentity-kind\tstatus\tlean-strategy\tcomputation\taxiom-delta\toverride-allowed"
-        : [ Text.intercalate
-              "\t"
+        : [ Text.intercalate "\t"
               [ Text.pack (show (coverageBuiltin coverage))
               , coverageAgdaKey coverage
               , Text.pack (show (coverageEntityKind coverage))
