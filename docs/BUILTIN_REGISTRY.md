@@ -76,3 +76,17 @@ Builtin receipts should be required in correspondence gates, release verificatio
 Generated Lean, CBOR, temporary comparison workspaces, and ad-hoc receipt files are reproducible build products and should remain ignored. Only reviewed golden fixtures and selected durable audit examples belong in version control.
 
 The hardening tests exercise complete inventory coverage, protected mappings, duplicate/conflict rejection, production fixture rejection, version skew, registry digest shape, and insertion-order determinism.
+
+## Agda 2.9 validation entrypoint
+
+The Agda backend has a separate Cabal project because Agda 2.9 is pinned from
+the audited source revision. Do not invoke the backend with plain `cabal` from
+the default project. Use:
+
+```sh
+nix develop -c scripts/cabal-agda-2.9.sh build --flag agda-backend exe:agda2lean-agda
+nix develop -c scripts/check-agda-backend.sh
+```
+
+The wrapper selects `cabal.project.agda-2.9`; the check script builds the
+backend, resolves the resulting executable, and processes `Identity.agda`.
