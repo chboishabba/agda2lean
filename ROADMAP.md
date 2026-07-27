@@ -781,3 +781,160 @@ The first meaningful release should not claim arbitrary Agda→Lean translation.
 ]
 
 That tranche would validate the architecture before expanding into the large NS/YM theorem graphs or committing to a full Cubical model.
+Yes—for the first Moonshine pilot, hardcoding `Moonshine.observer` is acceptable as a temporary, explicit fixture rule. It should not remain an emitter-wide semantic exception.
+
+There are three different kinds of “hardcoding”:
+
+* Good permanent mapping:
+  `Agda.Builtin.Nat.Nat ↦ Nat`.
+* Acceptable fixture mapping:
+  `Moonshine.observer ↦ AgdaMirror.Moonshine.observer`.
+* Dangerous exception:
+  “Whenever `Moonshine.observer` appears, ignore it during comparison.”
+
+The second form belongs in the versioned fixture/mapping registry:
+
+```toml
+[[fixture.mapping]]
+from = "Moonshine.observer"
+to = "AgdaMirror.Moonshine.observer"
+kind = "semantic"
+```
+
+The comparator should then verify that mapping rather than assume it. Because both definitions are transparent, it can also normalize their bodies and confirm both reduce to `1`.
+
+It should not be embedded in general Haskell or shell logic such as:
+
+```bash
+grep -v 'Moonshine.observer'
+```
+
+That could hide a real mismatch if one side later changed `observer` to `2`.
+
+So the intended progression is:
+
+1. Hardcode the pilot pairing explicitly.
+2. Move it into `dashi-mirrors.toml`.
+3. Verify the paired definition bodies or a Lean kernel bridge.
+4. Make the comparison runner generic over registry entries.
+5. Remove every Moonshine-specific name from shared comparator code.
+
+The fixture is allowed to say which declarations correspond. It is not allowed to dictate that mismatches between them should be ignored.
+
+
+
+We should not hand-code builtin behaviour repeatedly in the emitter. But a small, curated cross-language mapping table is necessary: no evaluator can safely infer that Agda’s natural numbers are intended to become Lean’s native `Nat` merely from structural similarity.
+
+The right model is hybrid:
+
+```mermaid
+flowchart LR
+    A["Agda builtin table"] --> I["Canonical builtin ID"]
+    I --> R["Versioned platform registry"]
+    R --> L["Generated Lean lowering"]
+    R --> V["Automatic verification"]
+```
+
+## What is automatic
+
+The Agda backend should query Agda’s elaborated builtin environment to determine that a particular qualified name is the active natural-number type, equality type, zero constructor, successor, and so forth.
+
+Occurrences then become canonical IR primitives:
+
+```text
+Builtin.Nat
+Builtin.Nat.zero
+Builtin.Nat.suc
+Builtin.Nat.add
+Builtin.Equality
+Builtin.Equality.refl
+```
+
+This avoids depending primarily on source spellings such as `Agda.Builtin.Nat.Nat`. Agda can bind builtins through pragmas or library modules, so semantic builtin identity is stronger than matching strings.
+
+The emitter then consults a registry and automatically produces:
+
+```text
+Builtin.Nat          ↦ Nat
+Builtin.Nat.zero     ↦ Nat.zero
+Builtin.Nat.suc      ↦ Nat.succ
+Builtin.Nat.add      ↦ Nat.add
+Builtin.Equality     ↦ Eq
+Builtin.Equality.refl ↦ Eq.refl
+```
+
+Every occurrence is lowered programmatically. We do not manually annotate every translated file.
+
+## What must be curated
+
+The choice of native Lean equivalent is a semantic decision and should be written once in a versioned platform registry:
+
+```toml
+[[platform-mapping]]
+source-builtin = "nat"
+source-audit-name = "Agda.Builtin.Nat.Nat"
+target = "Nat"
+mode = "exact-inductive"
+axiom-effect = "none"
+
+[[platform-mapping]]
+source-builtin = "identity"
+source-audit-name = "Agda.Builtin.Equality._≡_"
+target = "Eq"
+mode = "ordinary-equality"
+axiom-effect = "none"
+```
+
+The source spelling is useful for diagnostics and version auditing, but the builtin identity selects the mapping.
+
+There should be separate registries:
+
+* Platform mappings: `Nat`, `Bool`, `List`, ordinary equality, universes.
+* Library mappings: Agda standard library → Mathlib/PhysLean.
+* Project mappings: DASHI declarations such as `Moonshine.observer`.
+* Fixture pairings: which particular Agda and Lean declarations should be compared.
+
+## What gets verified automatically
+
+Each permanent mapping should carry computation obligations. For natural numbers:
+
+[
+0_A \leftrightarrow 0_L,\qquad
+\operatorname{suc}_A \leftrightarrow \operatorname{succ}_L,
+]
+
+[
+\operatorname{add}_A(0,n)\leftrightarrow
+\operatorname{add}_L(0,n),
+]
+
+[
+\operatorname{add}_A(\operatorname{suc}(m),n)
+\leftrightarrow
+\operatorname{add}_L(\operatorname{succ}(m),n).
+]
+
+Agda and Lean independently check their corresponding laws. The receipt records that both sides implement the same constructor and reduction signature.
+
+For finite computations, we can additionally evaluate representative normalized expressions on both sides. Later, portable certificates or logical relations provide stronger verification.
+
+## What we should avoid
+
+We should remove emitter logic like:
+
+```haskell
+if name == "Agda.Builtin.Nat.Nat"
+  then "Nat"
+```
+
+and replace it with:
+
+```haskell
+resolveBuiltin sourceName
+  >>= lookupPlatformMapping
+  >>= lowerMappedPrimitive
+```
+
+Likewise, generated shims should come from the mapping/compatibility layer rather than bespoke emitter branches.
+
+So the short answer is: we hand-author the small semantic dictionary once, because that choice cannot safely be inferred. Identification, lowering, adapter generation, occurrence handling and verification should all be automatic.
