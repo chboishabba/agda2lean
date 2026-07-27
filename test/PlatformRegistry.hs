@@ -90,6 +90,22 @@ compositionTests =
         case composeRegistryLayers ProductionMode [platformRegistryLayer, projectLayer] of
           Left issues -> assertBool "protected override was not reported" (any isProtected issues)
           Right _ -> assertFailure "protected platform mapping was shadowed"
+    , testCase "rejects a wrong entity kind before lowering" $ do
+        let mapping =
+              (platformMappings Map.! BuiltinNat)
+                { platformScope = ProjectScope
+                , platformEntityKind = BuiltinFunction
+                }
+            projectLayer =
+              RegistryLayer
+                { registryLayerName = "wrong-kind"
+                , registryLayerVersion = "1"
+                , registryLayerScope = ProjectScope
+                , registryLayerMappings = [mapping]
+                }
+        case composeRegistryLayers ProductionMode [platformRegistryLayer, projectLayer] of
+          Left issues -> assertBool "kind mismatch was not reported" (any isKindMismatch issues)
+          Right _ -> assertFailure "wrong-kind mapping was accepted"
     , testCase "rejects fixture rules outside explicit test mode" $ do
         let mapping = (platformMappings Map.! BuiltinBool) {platformScope = FixtureOnly}
             fixtureLayer =
@@ -108,6 +124,8 @@ compositionTests =
     isDuplicate _ = False
     isProtected (ProtectedOverride _ _) = True
     isProtected _ = False
+    isKindMismatch (KindMismatch _ _ _) = True
+    isKindMismatch _ = False
     isFixture (FixtureRuleOutsideTestMode _) = True
     isFixture _ = False
 
