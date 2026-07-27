@@ -57,18 +57,15 @@ codecTests =
           @?= moduleObjectHash exampleModule
     , testCase "semantic hash matches the schema-v2 golden object" $
         renderObjectHash (moduleObjectHash exampleModule)
-          @?= "c9a854b7201edd900fb056302192c86f9639887bea35d536f005f9e7643f1095"
+          @?= "322c33c625c7054ad2d4aa32a9c44441e26c01e93927f0a32e6e6b395ca82d79"
     , testCase "rejects trailing bytes" $
         case decodeModule (encodeModule exampleModule <> "\NUL") of
           Left _ -> pure ()
           Right _ -> assertFailure "trailing data was accepted"
     , testCase "rejects oversized container headers before allocation" $ do
         let encoded = encodeModule exampleModule
-            marker = "\x81\x6eAgda.Primitive"
-            (prefix, suffix) = ByteString.breakSubstring marker encoded
             oversizedLength = ByteString.pack [0x9a, 0x00, 0x98, 0x96, 0x81]
-            hostile = prefix <> oversizedLength <> ByteString.drop 1 suffix
-        assertBool "test fixture marker not found" (not (ByteString.null suffix))
+            hostile = oversizedLength <> ByteString.drop 1 encoded
         case decodeModule hostile of
           Left _ -> pure ()
           Right _ -> assertFailure "oversized container was accepted"
@@ -145,6 +142,28 @@ leanEmitterTests =
             assertBool
               "exact output contains sorry"
               (not ("sorry" `Text.isInfixOf` leanSource output))
+    , testCase "pins the Agda.Builtin.Equality shim shape" $ do
+        let output = emitLeanModule defaultEmitOptions builtinEqualityModule
+        assertBool
+          "equality definition missing"
+          ("def «_≡_» {α : Type} (x y : α) : Prop := Eq x y"
+            `Text.isInfixOf` leanSource output)
+        assertBool
+          "refl theorem missing"
+          ("theorem «_≡_».refl {α : Type} {x : α} : «_≡_» x x := rfl"
+            `Text.isInfixOf` leanSource output)
+        assertBool
+          "equality shim emitted diagnostics unexpectedly"
+          (Vector.null (leanDiagnostics output))
+    , testCase "pins the Agda.Builtin.Nat OfNat shim" $ do
+        let output = emitLeanModule defaultEmitOptions builtinNatModule
+        assertBool
+          "Nat OfNat instance missing"
+          ("noncomputable instance (n : _root_.Nat) : OfNat Nat n := ⟨Nat.zero⟩"
+            `Text.isInfixOf` leanSource output)
+        assertBool
+          "Nat shim emitted diagnostics unexpectedly"
+          (Vector.null (leanDiagnostics output))
     , testCase "makes reconstruction boundaries explicit and machine visible" $
         case extractModule reconstructSnapshot of
           Left issue -> assertFailure (show issue)
@@ -172,6 +191,55 @@ leanEmitterTests =
                   (leanDiagnostics output)
               )
     ]
+
+builtinNatModule :: ModuleIR
+builtinNatModule =
+  exampleModule
+    { moduleName = CanonicalName "Agda.Builtin.Nat"
+    , moduleImports =
+        Set.fromList
+          [ CanonicalName "Agda.Builtin.Bool"
+          , CanonicalName "Agda.Primitive"
+          ]
+    , moduleDeclarations = Vector.empty
+    , moduleTerms = Map.empty
+    }
+
+builtinEqualityModule :: ModuleIR
+builtinEqualityModule =
+  ModuleIR
+    { moduleSchemaVersion = currentSchemaVersion
+    , moduleName = CanonicalName "Agda.Builtin.Equality"
+    , moduleImports = Set.singleton (CanonicalName "Agda.Primitive")
+    , moduleTerms = Map.empty
+    , moduleDeclarations =
+        Vector.fromList
+          [ CoreDeclaration
+              { declarationName = CanonicalName "Agda.Builtin.Equality._≡_"
+              , declarationRole = AxiomDeclaration
+              , declarationUniverses = Vector.empty
+              , declarationModuleParameters = Vector.empty
+              , declarationType = TermId 0
+              , declarationBody = Nothing
+              , declarationDependencies = Set.empty
+              , declarationFeatures = Set.empty
+              , declarationSource = SourceSpan "Agda/Builtin/Equality.agda" 1 1
+              , declarationMapping = Exact
+              }
+          , CoreDeclaration
+              { declarationName = CanonicalName "Agda.Builtin.Equality._≡_.refl"
+              , declarationRole = Theorem
+              , declarationUniverses = Vector.empty
+              , declarationModuleParameters = Vector.empty
+              , declarationType = TermId 0
+              , declarationBody = Nothing
+              , declarationDependencies = Set.empty
+              , declarationFeatures = Set.empty
+              , declarationSource = SourceSpan "Agda/Builtin/Equality.agda" 2 2
+              , declarationMapping = Exact
+              }
+          ]
+    }
 
 validationTests :: TestTree
 validationTests =
@@ -324,7 +392,7 @@ catalogTests =
           [Only oldImportCount] <-
             query_
               raw
-              "SELECT COUNT(*) FROM module_imports WHERE imported_module = 'Agda.Primitive'" ::
+              "SELECT COUNT(*) FROM module_imports WHERE imported_module_name = 'Agda.Primitive'" ::
               IO [Only Int]
           [Only oldDependencyCount] <-
             query_

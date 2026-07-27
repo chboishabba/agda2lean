@@ -6,7 +6,7 @@ Deterministic dependency manifest for Lean declarations.
 
 Usage:
 
-  lake env lean --run lean/Agda2Lean/Manifest.lean -- \
+  lake env lean --run lean/Agda2Lean/Manifest.lean \
     --module My.Project.Module \
     My.Project.theorem My.Project.definition
 
@@ -69,7 +69,7 @@ where
           go rest { parsed with constants := parsed.constants.push argument.toName }
 
 private def sortedUnique (names : Array Name) : Array Name := Id.run do
-  let sorted := names.qsort (· < ·)
+  let sorted := names.qsort (fun left right => toString left < toString right)
   let mut result := #[]
   for name in sorted do
     if result.back? != some name then
