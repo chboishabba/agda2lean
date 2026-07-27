@@ -1,0 +1,199 @@
+schema-version = 1
+
+# Immutable DASHI mirror fixtures. The Lean mirror corpus is on the historical
+# branch commit below, not dashi_lean4/main.
+
+[[fixture]]
+id = "moonshine"
+tier = "smoke"
+
+[fixture.agda]
+repo = "https://github.com/chboishabba/dashi_agda.git"
+ref = "72ae53834be4cd6df842d80fae97c892990ccef6"
+module = "Moonshine"
+path = "Moonshine.agda"
+include-dirs = ["."]
+
+[fixture.lean]
+repo = "https://github.com/chboishabba/dashi_lean4.git"
+ref = "55132524c2e132c0b86c17eeb60d7e39c3af08b6"
+module = "AgdaMirror.Moonshine"
+toolchain = "leanprover/lean4:v4.28.0"
+files = ["Moonshine.lean => AgdaMirror/Moonshine.lean"]
+
+[fixture.policy]
+statement = "lean-defeq"
+axioms = "target-subset"
+allowed-lean-axioms = []
+
+[[fixture.mapping]]
+from = "Agda.Builtin.Nat"
+to = "Nat"
+kind = "platform"
+
+[[fixture.mapping]]
+from = "Agda.Builtin.Equality"
+to = "Eq"
+kind = "platform"
+
+[[fixture.mapping]]
+from = "Agda.Builtin.Bool"
+to = "Bool"
+kind = "platform"
+
+[[fixture.declaration]]
+agda = "Moonshine.moonshine"
+lean = "AgdaMirror.Moonshine.moonshine"
+kind = "theorem"
+expected = "pass"
+
+[[fixture.declaration]]
+agda = "Moonshine.rep-dim-check"
+lean = "AgdaMirror.Moonshine.rep_dim_check"
+kind = "theorem"
+expected = "pass"
+
+[[fixture.declaration]]
+agda = "Moonshine.mckay"
+lean = "AgdaMirror.Moonshine.mckay"
+kind = "theorem"
+expected = "pass"
+
+[[fixture.declaration]]
+agda = "Moonshine.observer-is-j-fixed"
+lean = "AgdaMirror.Moonshine.observer_is_j_fixed"
+kind = "theorem"
+expected = "pass"
+
+[[fixture.declaration]]
+agda = "Moonshine.embedding"
+lean = "AgdaMirror.Moonshine.embedding"
+kind = "theorem"
+expected = "pass"
+
+[[fixture]]
+id = "crtj-fixed-point"
+tier = "pilot"
+
+[fixture.agda]
+repo = "https://github.com/chboishabba/dashi_agda.git"
+ref = "72ae53834be4cd6df842d80fae97c892990ccef6"
+module = "CRTJFixedPointBridge"
+path = "CRTJFixedPointBridge.agda"
+include-dirs = ["."]
+
+[fixture.lean]
+repo = "https://github.com/chboishabba/dashi_lean4.git"
+ref = "55132524c2e132c0b86c17eeb60d7e39c3af08b6"
+module = "AgdaMirror.CRTJFixedPointBridge"
+toolchain = "leanprover/lean4:v4.28.0"
+files = ["CRTPeriod.lean => AgdaMirror/CRTPeriod.lean", "JFixedPoint.lean => AgdaMirror/JFixedPoint.lean", "CRTJFixedPointBridge.lean => AgdaMirror/CRTJFixedPointBridge.lean"]
+
+[fixture.policy]
+statement = "lean-defeq"
+axioms = "target-subset"
+allowed-lean-axioms = []
+
+[[fixture.mapping]]
+from = "Agda.Builtin.Equality"
+to = "Eq"
+kind = "platform"
+
+[[fixture.mapping]]
+from = "Agda.Builtin.Nat"
+to = "Nat"
+kind = "platform"
+
+[[fixture.mapping]]
+from = "CRTPeriod"
+to = "AgdaMirror.CRTPeriod"
+kind = "semantic"
+
+[[fixture.mapping]]
+from = "JFixedPoint"
+to = "AgdaMirror.JFixedPoint"
+kind = "semantic"
+
+[[fixture.declaration]]
+agda = "CRTJFixedPointBridge.period-plus-one"
+lean = "AgdaMirror.CRTJFixedPointBridge.period_plus_one"
+kind = "theorem"
+expected = "pass"
+
+[[fixture.declaration]]
+agda = "CRTJFixedPointBridge.unit-contract-period-plus-one"
+lean = "AgdaMirror.CRTJFixedPointBridge.unit_contract_period_plus_one"
+kind = "theorem"
+expected = "pass"
+
+[[fixture.declaration]]
+agda = "CRTJFixedPointBridge.stack-contract-period-plus-one"
+lean = "AgdaMirror.CRTJFixedPointBridge.stack_contract_period_plus_one"
+kind = "theorem"
+expected = "pass"
+
+[[fixture.declaration]]
+agda = "CRTJFixedPointBridge.crt-periodicity-at-moonshine-minus-one"
+lean = "AgdaMirror.CRTJFixedPointBridge.crt_periodicity_at_moonshine_minus_one"
+kind = "theorem"
+expected = "pass"
+
+[[fixture.declaration]]
+agda = "CRTJFixedPointBridge.CRTJFixedPointBridge"
+lean = "AgdaMirror.CRTJFixedPointBridge.Bridge"
+kind = "structure"
+expected = "pass"
+
+[[fixture.declaration]]
+agda = "CRTJFixedPointBridge.crtJFixedPointBridgeSurface"
+lean = "AgdaMirror.CRTJFixedPointBridge.crtJFixedPointBridgeSurface"
+kind = "function"
+expected = "pass"
+
+[[fixture]]
+id = "constraint-closure"
+tier = "smoke"
+
+[fixture.agda]
+repo = "https://github.com/chboishabba/dashi_agda.git"
+ref = "72ae53834be4cd6df842d80fae97c892990ccef6"
+module = "DASHI.Algebra.Quantum.ConstraintClosure"
+path = "DASHI/Algebra/Quantum/ConstraintClosure.agda"
+include-dirs = ["."]
+
+[fixture.lean]
+repo = "https://github.com/chboishabba/dashi_lean4.git"
+ref = "55132524c2e132c0b86c17eeb60d7e39c3af08b6"
+module = "AgdaMirror.ConstraintClosure"
+toolchain = "leanprover/lean4:v4.28.0"
+files = ["ConstraintClosure.lean => AgdaMirror/ConstraintClosure.lean"]
+
+[fixture.policy]
+statement = "lean-defeq"
+axioms = "target-subset"
+allowed-lean-axioms = []
+
+[[fixture.mapping]]
+from = "DASHI.Core.Prelude.Nat"
+to = "Nat"
+kind = "platform"
+
+[[fixture.mapping]]
+from = "DASHI.Core.Prelude.Σ"
+to = "Sigma"
+kind = "semantic"
+
+[[fixture.declaration]]
+agda = "DASHI.Algebra.Quantum.ConstraintClosure.ConstraintClosureAxioms"
+lean = "AgdaMirror.ConstraintClosure.ConstraintClosureAxioms"
+kind = "structure"
+expected = "pass"
+
+# Agda's commute field returns proof-relevant Sigma in Set. The historical Lean
+# mirror weakens it to Exists in Prop, so a faithful comparison must block.
+[[fixture.declaration]]
+agda = "DASHI.Algebra.Quantum.ConstraintClosure.Closure"
+lean = "AgdaMirror.ConstraintClosure.Closure"
+kind = "structure"
+expected = "blocked"
+expected-code = "A2L-E-PROOF-RELEVANCE"
