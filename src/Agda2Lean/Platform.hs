@@ -40,7 +40,7 @@ import qualified Data.Text.Encoding as TextEncoding
 import Data.Word (Word16)
 
 data AxiomEffect = NoAxioms | MayIntroduceAxioms
-  deriving stock (Eq, Ord, Show)
+  deriving stock (Bounded, Enum, Eq, Ord, Show)
 
 data ComputationTreatment
   = NativeDefinitional
@@ -48,7 +48,7 @@ data ComputationTreatment
   | TheoremBacked
   | OpaqueConstant
   | AxiomaticCompatibility
-  deriving stock (Eq, Ord, Show)
+  deriving stock (Bounded, Enum, Eq, Ord, Show)
 
 data BuiltinEntityKind
   = BuiltinDatatype
@@ -66,7 +66,7 @@ data RegistryScope
   deriving stock (Bounded, Enum, Eq, Ord, Show)
 
 data RegistryMode = ProductionMode | TestMode
-  deriving stock (Eq, Ord, Show)
+  deriving stock (Bounded, Enum, Eq, Ord, Show)
 
 -- Keep the public label stable for codec-v3 receipts. Semantic identity is
 -- additionally bound to 'platformRegistryDigest'.
