@@ -102,5 +102,10 @@ ensureReceiptCompleteness moduleIR output
             <> Text.pack (show recorded)
         )
   where
-    encountered = Set.size (declarationBuiltins moduleIR)
+    encountered =
+      length
+        [ ()
+        | declaration <- Vector.toList (moduleDeclarations moduleIR)
+        , Just _ <- [declarationBuiltin declaration]
+        ]
     recorded = Vector.length (leanBuiltinReceipts output)
