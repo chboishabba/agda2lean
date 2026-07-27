@@ -4,6 +4,7 @@ module Main (main) where
 
 import Agda2Lean.IR (BuiltinId (..))
 import Agda2Lean.Platform
+import Agda2Lean.Registry.File (parseRegistryLayer, renderRegistryLayer)
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as Text
 import Test.Tasty (TestTree, defaultMain, testGroup)
@@ -17,6 +18,7 @@ main =
         [ inventoryTests
         , compatibilityTests
         , compositionTests
+        , registryFileTests
         , determinismTests
         ]
     )
@@ -128,6 +130,34 @@ compositionTests =
     isKindMismatch _ = False
     isFixture (FixtureRuleOutsideTestMode _) = True
     isFixture _ = False
+
+registryFileTests :: TestTree
+registryFileTests =
+  testGroup
+    "registry files"
+    [ testCase "round-trips a deterministic registry layer" $
+        parseRegistryLayer (renderRegistryLayer libraryLayer) @?= Right libraryLayer
+    , testCase "rejects unknown builtin identifiers" $
+        case parseRegistryLayer invalidLayerText of
+          Left message -> assertBool "missing parse context" ("unknown BuiltinId" `Text.isInfixOf` message)
+          Right _ -> assertFailure "unknown BuiltinId was accepted"
+    ]
+  where
+    libraryLayer =
+      RegistryLayer
+        { registryLayerName = "empty-library"
+        , registryLayerVersion = "1"
+        , registryLayerScope = LibraryScope
+        , registryLayerMappings = []
+        }
+    invalidLayerText =
+      Text.unlines
+        [ "# registry-name\tinvalid"
+        , "# registry-version\t1"
+        , "# registry-scope\tLibraryScope"
+        , "builtin-id\tagda-binding\tlean-target\trule\tcomputation\taxiom-effect\taxiom-delta\tentity-kind"
+        , "BuiltinDoesNotExist\tX\tX\texact\tNativeDefinitional\tNoAxioms\t-\tBuiltinFunction"
+        ]
 
 determinismTests :: TestTree
 determinismTests =
