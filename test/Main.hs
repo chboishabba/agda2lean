@@ -10,6 +10,7 @@ import Agda2Lean.Codec
 import Agda2Lean.Hash
 import Agda2Lean.IR
 import Agda2Lean.Lean.Emit
+import Agda2Lean.Platform (ComputationTreatment (..))
 import AgdaFixture
 import Control.Exception (SomeException, try)
 import Data.Bits (xor)
@@ -55,9 +56,9 @@ codecTests =
     , testCase "semantic hash follows canonical bytes" $
         moduleObjectHash exampleModuleReordered
           @?= moduleObjectHash exampleModule
-    , testCase "semantic hash matches the schema-v2 golden object" $
+    , testCase "semantic hash matches the codec-v3 golden object" $
         renderObjectHash (moduleObjectHash exampleModule)
-          @?= "322c33c625c7054ad2d4aa32a9c44441e26c01e93927f0a32e6e6b395ca82d79"
+          @?= "7eeb8aba83ae0e642977926cd6c38ad9ffd9820ed01bdf72bb88a0314f375fd3"
     , testCase "rejects trailing bytes" $
         case decodeModule (encodeModule exampleModule <> "\NUL") of
           Left _ -> pure ()
@@ -155,6 +156,44 @@ leanEmitterTests =
         assertBool
           "equality shim emitted diagnostics unexpectedly"
           (Vector.null (leanDiagnostics output))
+    , testCase "records deterministic builtin semantic receipts" $ do
+        let output = emitLeanModule defaultEmitOptions builtinEqualityModule
+            receipts = leanBuiltinReceipts output
+            equalityReceipt = Vector.head receipts
+        Vector.length receipts @?= 2
+        builtinReceiptAgdaBinding equalityReceipt
+          @?= "Agda.Builtin.Equality._≡_"
+        builtinReceiptRegistryVersion equalityReceipt @?= "lean4-platform-v1"
+        builtinReceiptRule equalityReceipt @?= Just "ordinary-equality"
+        builtinReceiptLeanTarget equalityReceipt @?= Just "Eq"
+        builtinReceiptComputation equalityReceipt @?= Just TheoremBacked
+        builtinReceiptStatus equalityReceipt @?= "mapped"
+        assertBool
+          "receipt rendering omitted its semantic fields"
+          ( and
+              [ "builtin-id" `Text.isInfixOf` renderBuiltinReceipts receipts
+              , "Agda.Builtin.Equality._≡_" `Text.isInfixOf` renderBuiltinReceipts receipts
+              , "TheoremBacked" `Text.isInfixOf` renderBuiltinReceipts receipts
+              ]
+          )
+    , testCase "records a blocked lowering instead of hiding it" $ do
+        let declaration = Vector.head (moduleDeclarations builtinEqualityModule)
+            blockedModule =
+              builtinEqualityModule
+                { moduleDeclarations =
+                    Vector.singleton
+                      declaration {declarationBuiltin = Just BuiltinLevelZero}
+                }
+            output = emitLeanModule defaultEmitOptions blockedModule
+            receipt = Vector.head (leanBuiltinReceipts output)
+        builtinReceiptStatus receipt @?= "blocked"
+        builtinReceiptRule receipt @?= Just "universe"
+        assertBool
+          "blocked builtin did not produce an error"
+          ( Vector.any
+              ((== "A2L-E-BUILTIN") . diagnosticCode)
+              (leanDiagnostics output)
+          )
     , testCase "pins the Agda.Builtin.Nat OfNat shim" $ do
         let output = emitLeanModule defaultEmitOptions builtinNatModule
         assertBool
@@ -216,6 +255,7 @@ builtinEqualityModule =
         Vector.fromList
           [ CoreDeclaration
               { declarationName = CanonicalName "Agda.Builtin.Equality._≡_"
+              , declarationBuiltin = Just BuiltinEquality
               , declarationRole = AxiomDeclaration
               , declarationUniverses = Vector.empty
               , declarationModuleParameters = Vector.empty
@@ -228,6 +268,7 @@ builtinEqualityModule =
               }
           , CoreDeclaration
               { declarationName = CanonicalName "Agda.Builtin.Equality._≡_.refl"
+              , declarationBuiltin = Just BuiltinRefl
               , declarationRole = Theorem
               , declarationUniverses = Vector.empty
               , declarationModuleParameters = Vector.empty

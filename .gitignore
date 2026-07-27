@@ -1,8 +1,13 @@
 dist-newstyle/
+.elan/
 .direnv/
 .envrc
+build/
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
 *.cbor
+*.agdai
+comparison/.lake/
+comparison/generated/
 result

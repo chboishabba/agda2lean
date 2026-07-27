@@ -1,3 +1,4 @@
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE StrictData #-}
 
@@ -11,6 +12,7 @@ module Agda2Lean.Agda.Snapshot
 
 import Agda2Lean.IR
   ( CanonicalName
+  , BuiltinId
   , DeclarationRole
   , Feature
   , Relevance
@@ -19,6 +21,7 @@ import Agda2Lean.IR
   , Visibility
   )
 import Data.Set (Set)
+import Data.Map.Strict (Map)
 import Data.Text (Text)
 import Data.Vector (Vector)
 import GHC.Generics (Generic)
@@ -55,6 +58,7 @@ data AgdaTerm
 
 data AgdaDeclaration = AgdaDeclaration
   { agdaDeclarationName :: CanonicalName
+  , agdaDeclarationBuiltin :: Maybe BuiltinId
   , agdaDeclarationRole :: DeclarationRole
   , agdaDeclarationUniverses :: Vector Text
   , agdaDeclarationModuleParameters :: Vector AgdaBinder
@@ -68,6 +72,7 @@ data AgdaDeclaration = AgdaDeclaration
 
 data AgdaModule = AgdaModule
   { agdaModuleName :: CanonicalName
+  , agdaModuleBuiltins :: Map CanonicalName BuiltinId
   , agdaModuleImports :: Set CanonicalName
   , agdaModuleDeclarations :: Vector AgdaDeclaration
   }

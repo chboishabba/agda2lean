@@ -48,6 +48,7 @@ exampleModule =
         Vector.singleton
           CoreDeclaration
             { declarationName = CanonicalName "DASHI.Example.Identity.identity"
+            , declarationBuiltin = Nothing
             , declarationRole = ComputationalFunction
             , declarationUniverses = Vector.empty
             , declarationModuleParameters = Vector.empty

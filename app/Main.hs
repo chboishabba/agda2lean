@@ -26,7 +26,7 @@ data Command
   | PutModule GlobalOptions FilePath
   | Classify FilePath FilePath
   | GetModule GlobalOptions Text.Text FilePath
-  | EmitLean FilePath FilePath FilePath Bool
+  | EmitLean FilePath FilePath FilePath (Maybe FilePath) Bool
   | Inspect GlobalOptions (Maybe Text.Text)
   | Verify GlobalOptions
 
@@ -125,6 +125,12 @@ emitLeanParser =
       (long "lean-output" <> metavar "PATH" <> help "Generated Lean file")
     <*> strOption
       (long "diagnostics" <> metavar "PATH" <> help "Tabular diagnostics file")
+    <*> optional
+      (strOption
+        ( long "builtin-receipt"
+            <> metavar "PATH"
+            <> help "Optional tabular builtin semantic receipt file"
+        ))
     <*> switch
       ( long "fail-on-reconstruction"
           <> help "Do not emit sorry at reconstruction boundaries"
@@ -140,7 +146,7 @@ runCommand (Classify inputPath outputPath) = do
       (decodeModule bytes)
   createDirectoryIfMissing True (takeDirectory outputPath)
   ByteString.writeFile outputPath (encodeModule (classifyModule moduleIR))
-runCommand (EmitLean inputPath leanPath diagnosticsPath failOnReconstruction) = do
+runCommand (EmitLean inputPath leanPath diagnosticsPath receiptPath failOnReconstruction) = do
   bytes <- ByteString.readFile inputPath
   moduleIR <-
     either
@@ -157,6 +163,11 @@ runCommand (EmitLean inputPath leanPath diagnosticsPath failOnReconstruction) = 
   createDirectoryIfMissing True (takeDirectory diagnosticsPath)
   Text.writeFile leanPath (leanSource output)
   Text.writeFile diagnosticsPath (renderDiagnostics (leanDiagnostics output))
+  case receiptPath of
+    Nothing -> pure ()
+    Just path -> do
+      createDirectoryIfMissing True (takeDirectory path)
+      Text.writeFile path (renderBuiltinReceipts (leanBuiltinReceipts output))
   whenErrors (leanDiagnostics output)
 runCommand command' = do
   let options = commandOptions command'
@@ -205,7 +216,7 @@ runCommand command' = do
         unless (null issues) exitFailure
       Classify _ _ ->
         ioError (userError "internal error: classify opened the catalog")
-      EmitLean _ _ _ _ ->
+      EmitLean _ _ _ _ _ ->
         ioError (userError "internal error: emit-lean opened the catalog")
 
 commandOptions :: Command -> GlobalOptions
@@ -213,7 +224,7 @@ commandOptions = \case
   Init options -> options
   PutModule options _ -> options
   Classify _ _ -> error "classify does not use a catalog"
-  EmitLean _ _ _ _ -> error "emit-lean does not use a catalog"
+  EmitLean _ _ _ _ _ -> error "emit-lean does not use a catalog"
   GetModule options _ _ -> options
   Inspect options _ -> options
   Verify options -> options

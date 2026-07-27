@@ -1,3 +1,4 @@
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StrictData #-}
@@ -6,6 +7,7 @@ module Agda2Lean.IR
   ( Argument (..)
   , Binder (..)
   , BinderId (..)
+  , BuiltinId (..)
   , CanonicalName (..)
   , CoreDeclaration (..)
   , CoreTerm (..)
@@ -45,6 +47,30 @@ currentSchemaVersion = SchemaVersion 2
 
 newtype CanonicalName = CanonicalName {unCanonicalName :: Text}
   deriving stock (Eq, Ord, Show, Generic)
+
+-- | Language-neutral identities for the small set of cross-language
+-- primitives whose target representation is a semantic choice.
+data BuiltinId
+  = BuiltinNat
+  | BuiltinNatZero
+  | BuiltinNatSuc
+  | BuiltinNatAdd
+  | BuiltinNatSub
+  | BuiltinNatMul
+  | BuiltinNatEq
+  | BuiltinNatLt
+  | BuiltinBool
+  | BuiltinBoolTrue
+  | BuiltinBoolFalse
+  | BuiltinEquality
+  | BuiltinRefl
+  | BuiltinLevel
+  | BuiltinLevelZero
+  | BuiltinLevelSuc
+  | BuiltinLevelMax
+  | BuiltinProp
+  | BuiltinSet
+  deriving stock (Bounded, Enum, Eq, Ord, Show, Generic)
 
 newtype BinderId = BinderId {unBinderId :: Word64}
   deriving stock (Eq, Ord, Show, Generic)
@@ -109,6 +135,7 @@ data CoreTerm
   | Eliminator CanonicalName (Vector Argument)
   | Equality TermId TermId TermId
   | Axiom CanonicalName
+  | Builtin BuiltinId
   | Extension ExtensionTerm
   deriving stock (Eq, Ord, Show, Generic)
 
@@ -150,6 +177,7 @@ data SourceSpan = SourceSpan
 
 data CoreDeclaration = CoreDeclaration
   { declarationName :: CanonicalName
+  , declarationBuiltin :: Maybe BuiltinId
   , declarationRole :: DeclarationRole
   , declarationUniverses :: Vector Text
   , declarationModuleParameters :: Vector Binder
@@ -284,6 +312,7 @@ termReferences term =
     Eliminator _ arguments -> argumentReferences arguments
     Equality type' left right -> Set.fromList [type', left, right]
     Axiom _ -> Set.empty
+    Builtin _ -> Set.empty
     Extension extension ->
       case extension of
         CubicalPrimitive _ terms -> Set.fromList (Vector.toList terms)

@@ -91,7 +91,7 @@ renderRows headers rows =
 
 renderRow :: [Int] -> [Text] -> Text
 renderRow widths values =
-  Text.intercalate "  " (zipWith Text.justifyLeft widths ' ' values)
+  Text.intercalate "  " (zipWith (\width value -> Text.justifyLeft width ' ' value) widths values)
 
 showText :: Show a => a -> Text
 showText = Text.pack . show
