@@ -11,11 +11,12 @@ import Agda2Lean.IR (BuiltinId, CanonicalName (..))
 import Agda2Lean.Lean.Checked (emitLeanModuleChecked)
 import Agda2Lean.Lean.Emit
 import Agda2Lean.Platform
-import Agda2Lean.Registry.File (loadRegistryLayer)
+import Agda2Lean.Registry.File (loadRegistryLayer, renderRegistryLayer)
 import Agda2Lean.Render
 import Control.Exception (bracket)
 import Control.Monad (unless)
 import qualified Data.ByteString as ByteString
+import Data.List (sortOn)
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as TextEncoding
@@ -171,7 +172,7 @@ runCommand (Classify inputPath outputPath) = do
 runCommand (BuiltinInventory outputPath) =
   writeTextAtomic outputPath (inventoryBundle renderBuiltinCoverageInventory)
 runCommand (EmitLean inputPath leanPath diagnosticsPath receiptPath registryOptions failOnReconstruction) = do
-  effectiveRegistry <- loadEffectiveRegistry registryOptions
+  (effectiveRegistry, effectiveDigest) <- loadEffectiveRegistry registryOptions
   bytes <- ByteString.readFile inputPath
   moduleIR <- either (ioError . userError . Text.unpack) pure (decodeModule bytes)
   let emitOptions =
@@ -191,10 +192,7 @@ runCommand (EmitLean inputPath leanPath diagnosticsPath receiptPath registryOpti
     Just path ->
       writeTextAtomic
         path
-        ( receiptBundle
-            (effectiveRegistryDigest effectiveRegistry)
-            (renderBuiltinReceipts (leanBuiltinReceipts output))
-        )
+        (receiptBundle effectiveDigest (renderBuiltinReceipts (leanBuiltinReceipts output)))
   whenErrors (leanDiagnostics output)
 runCommand command' = do
   let options = commandOptions command'
@@ -252,17 +250,57 @@ commandOptions = \case
   Inspect options _ -> options
   Verify options -> options
 
-loadEffectiveRegistry :: RegistryOptions -> IO (Map.Map BuiltinId PlatformMapping)
+loadEffectiveRegistry :: RegistryOptions -> IO (Map.Map BuiltinId PlatformMapping, Text.Text)
 loadEffectiveRegistry options = do
   libraryLayers <- traverse (loadRegistryLayer LibraryScope) (libraryRegistryPaths options)
   projectLayers <- traverse (loadRegistryLayer ProjectScope) (projectRegistryPaths options)
   fixtureLayers <- traverse (loadRegistryLayer FixtureOnly) (fixtureRegistryPaths options)
   let mode = if registryTestMode options then TestMode else ProductionMode
       layers = platformRegistryLayer : libraryLayers <> projectLayers <> fixtureLayers
-  either
-    (ioError . userError . unlines . map show)
-    pure
-    (composeRegistryLayers mode layers)
+  registry <-
+    either
+      (ioError . userError . unlines . map show)
+      pure
+      (composeRegistryLayers mode layers)
+  pure (registry, registryBundleDigest layers registry)
+
+registryBundleDigest :: [RegistryLayer] -> Map.Map BuiltinId PlatformMapping -> Text.Text
+registryBundleDigest layers registry =
+  renderObjectHash
+    ( hashBytes
+        ( TextEncoding.encodeUtf8
+            ( Text.unlines
+                ( map renderCanonicalLayer (sortOn layerKey layers)
+                    <> [renderCanonicalMappings registry]
+                )
+            )
+        )
+    )
+  where
+    layerKey layer =
+      (registryLayerScope layer, registryLayerName layer, registryLayerVersion layer)
+    renderCanonicalLayer layer =
+      renderRegistryLayer
+        layer
+          { registryLayerMappings =
+              sortOn platformBuiltin (registryLayerMappings layer)
+          }
+    renderCanonicalMappings mappings =
+      Text.unlines
+        [ Text.intercalate
+            "\t"
+            [ Text.pack (show builtin)
+            , platformAuditName mapping
+            , platformTarget mapping
+            , platformMode mapping
+            , Text.pack (show (platformComputation mapping))
+            , Text.pack (show (platformAxiomEffect mapping))
+            , Text.intercalate "," (platformAxiomDelta mapping)
+            , Text.pack (show (platformEntityKind mapping))
+            , Text.pack (show (platformScope mapping))
+            ]
+        | (builtin, mapping) <- Map.toAscList mappings
+        ]
 
 receiptBundle :: Text.Text -> Text.Text -> Text.Text
 receiptBundle registryDigest body = provenanceHeader registryDigest <> body
@@ -280,30 +318,6 @@ provenanceHeader registryDigest =
     , "# agda-backend\t" <> versionAgdaBackend currentVersionContext
     , "# lean-target\t" <> versionLeanTarget currentVersionContext
     ]
-
-effectiveRegistryDigest :: Map.Map BuiltinId PlatformMapping -> Text.Text
-effectiveRegistryDigest registry =
-  renderObjectHash
-    ( hashBytes
-        ( TextEncoding.encodeUtf8
-            ( Text.unlines
-                [ Text.intercalate
-                    "\t"
-                    [ Text.pack (show builtin)
-                    , platformAuditName mapping
-                    , platformTarget mapping
-                    , platformMode mapping
-                    , Text.pack (show (platformComputation mapping))
-                    , Text.pack (show (platformAxiomEffect mapping))
-                    , Text.intercalate "," (platformAxiomDelta mapping)
-                    , Text.pack (show (platformEntityKind mapping))
-                    , Text.pack (show (platformScope mapping))
-                    ]
-                | (builtin, mapping) <- Map.toAscList registry
-                ]
-            )
-        )
-    )
 
 writeTextAtomic :: FilePath -> Text.Text -> IO ()
 writeTextAtomic path contents = do
