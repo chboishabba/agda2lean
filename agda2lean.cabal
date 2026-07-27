@@ -17,6 +17,7 @@ extra-source-files:
     scripts/cabal-agda-2.9.sh
     scripts/check-agda-backend.sh
     scripts/check-comparison.sh
+    scripts/check-monsterstate-correspondence.sh
     scripts/check-moonshine-correspondence.sh
     scripts/stage-comparison.sh
     fixtures/dashi-mirrors.toml
@@ -142,4 +143,5 @@ test-suite platform-registry-test
         containers >=0.6,
         tasty >=1.5,
         tasty-hunit >=0.10,
-        text >=2.0
+        text >=2.0,
+        vector >=0.13

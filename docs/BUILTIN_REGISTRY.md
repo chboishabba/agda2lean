@@ -158,3 +158,5 @@ nix develop -c scripts/check-agda-backend.sh
 ```
 
 The wrapper selects `cabal.project.agda-2.9`; the check script builds the backend, resolves the resulting executable, and processes `Identity.agda`.
+
+On a cold or partially warm cache, `scripts/check-agda-backend.sh` is slow because it also builds the pinned Agda 2.9 source dependency tree. A full run in this environment took about 17 minutes before reaching the `Identity.agda` smoke test.

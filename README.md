@@ -164,6 +164,9 @@ cabal --project-file=cabal.project.agda-2.9 run \
   -fagda-backend agda2lean-agda -- \
   -j2 --lean-ir --compile-dir build/ir path/to/Module.agda
 
+# Compare a second Agda target against the Dashi Lean mirror.
+scripts/check-monsterstate-correspondence.sh
+
 cabal run agda2lean -- init --database build/catalog.sqlite
 cabal run agda2lean -- put-module \
   --database build/catalog.sqlite \
@@ -183,6 +186,8 @@ cabal run agda2lean -- emit-lean \
   --diagnostics build/lean/Module.diagnostics.tsv \
   --fail-on-reconstruction
 ```
+
+The pinned Agda backend check is intentionally expensive on a cold cache because Cabal builds the audited Agda 2.9 source dependency tree before it runs `Identity.agda`. In this environment the end-to-end `scripts/check-agda-backend.sh` smoke test took about 17 minutes.
 
 `put-module` validates and re-encodes the supplied object before storing it, so
 non-canonical or trailing input cannot acquire an authoritative object hash.
