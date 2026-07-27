@@ -1,0 +1,20 @@
+id	source	expected	phase	features	oracle	rationale
+structural.parameterized-datatype	test/conformance/Structural/ParameterizedDatatype.agda	reconstruction-boundary	structural	datatype,parameters,constructors	-	statement shape is expected to extract; constructor bodies are not yet portable
+structural.record	test/conformance/Structural/Record.agda	reconstruction-boundary	structural	record,projection,constructor	-	record declarations and projection bodies require explicit lowering evidence
+structural.nested-namespace	test/conformance/Structural/NestedNamespace.agda	supported-correspondence	structural	namespace,module-name	-	canonical names and namespaces are already represented directly
+structural.implicit-arguments	test/conformance/Structural/ImplicitArguments.agda	reconstruction-boundary	structural	implicit-binder,function	-	visibility is represented; function body reconstruction remains explicit
+structural.instance-arguments	test/conformance/Structural/InstanceArguments.agda	reconstruction-boundary	structural	instance-binder,record	-	instance visibility is represented but class synthesis correspondence is case-specific
+structural.mutual-definitions	test/conformance/Structural/MutualDefinitions.agda	reconstruction-boundary	structural	mutual,recursion	-	mutual clause bodies and termination structure need lowering
+structural.local-module	test/conformance/Structural/LocalModule.agda	reconstruction-boundary	structural	local-module,parameters	-	module parameter instantiation needs correspondence evidence
+computation.structural-recursion	test/conformance/Computation/StructuralRecursion.agda	reconstruction-boundary	computation	structural-recursion,patterns	-	portable clauses are not yet extracted
+computation.dependent-pattern	test/conformance/Computation/DependentPattern.agda	reconstruction-boundary	computation	indexed-datatype,dependent-pattern	-	dependent motives and refinements require explicit IR support
+computation.with-abstraction	test/conformance/Computation/WithAbstraction.agda	reconstruction-boundary	computation	with-abstraction,generated-helper	-	generated with-functions require body lowering and stable dependency handling
+computation.irrelevant-argument	test/conformance/Computation/IrrelevantArgument.agda	reconstruction-boundary	computation	irrelevance,erasure	-	relevance is represented but erasure correspondence needs proof
+builtins.unit	test/conformance/Builtins/Unit.agda	deliberately-unsupported	builtins	unit,unit-constructor	-	upstream semantic identities are not yet promoted
+builtins.sigma	test/conformance/Builtins/Sigma.agda	deliberately-unsupported	builtins	sigma,sigma-constructor	-	upstream semantic identities are not yet promoted
+builtins.list	test/conformance/Builtins/List.agda	deliberately-unsupported	builtins	list,nil,cons	-	upstream semantic identities are not yet promoted
+builtins.maybe	test/conformance/Builtins/Maybe.agda	deliberately-unsupported	builtins	maybe,nothing,just	-	upstream semantic identities are not yet promoted
+builtins.integer	test/conformance/Builtins/Integer.agda	deliberately-unsupported	builtins	integer,positive,negative	-	upstream semantic identities are not yet promoted
+boundary.rewrite	test/conformance/Boundary/Rewrite.agda	deliberately-unsupported	boundary	rewrite-rule	-	no reviewed theorem-backed rewrite lowering exists
+boundary.reflection	test/conformance/Boundary/Reflection.agda	deliberately-unsupported	boundary	reflection,tcm	-	reflection programs have no reviewed Lean metaprogram correspondence
+boundary.cubical	test/conformance/Boundary/Cubical.agda	deliberately-unsupported	boundary	cubical,path,interval	-	interval/path/composition semantics are intentionally blocked
