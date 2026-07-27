@@ -53,6 +53,7 @@ library
         Agda2Lean.Codec
         Agda2Lean.Hash
         Agda2Lean.IR
+        Agda2Lean.Lean.Checked
         Agda2Lean.Lean.Emit
         Agda2Lean.Mirror.Manifest
         Agda2Lean.Platform
