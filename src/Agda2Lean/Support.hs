@@ -15,14 +15,11 @@ import Agda2Lean.IR
 import Agda2Lean.Platform (platformMappings)
 import Data.List (sortOn)
 import qualified Data.Map.Strict as Map
-import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Vector as Vector
 
--- | Public, machine-readable support states. These names are deliberately
--- stable because conformance manifests and release reports consume them.
 data SupportClassification
   = SupportedCorrespondence
   | ReconstructionBoundary
@@ -65,11 +62,13 @@ inspectSupport moduleIR =
     features = foldMap declarationFeatures declarations
     mappings = map declarationMapping declarations
     roles = map declarationRole declarations
+    imports = Set.toList (moduleImports moduleIR)
 
     rows =
       [ SupportRow "module" (unCanonicalName (moduleName moduleIR)) 1
           SupportedCorrespondence "canonical module decoded and validated"
       ]
+        <> countedRows "import" importStatus unCanonicalName imports
         <> countedRows "builtin-declaration" builtinStatus (Text.pack . show) declarationBuiltins
         <> countedRows "builtin-term" builtinStatus (Text.pack . show) termBuiltins
         <> countedRows "ir" irStatus coreTermName terms
@@ -79,10 +78,41 @@ inspectSupport moduleIR =
         <> reconstructionRows declarations
         <> extensionRows terms
 
+importStatus :: CanonicalName -> (SupportClassification, Text)
+importStatus imported
+  | any (`Text.isPrefixOf` name) unsupportedBuiltinFamilies =
+      (DeliberatelyUnsupported, "imported builtin family has no promoted semantic identities")
+  | "Agda.Builtin.Reflection" `Text.isPrefixOf` name =
+      (DeliberatelyUnsupported, "reflection/TCM semantics have no reviewed Lean metaprogram lowering")
+  | "Agda.Builtin.Cubical" `Text.isPrefixOf` name =
+      (DeliberatelyUnsupported, "cubical interval/path/composition semantics are intentionally blocked")
+  | "Agda.Builtin.Size" `Text.isPrefixOf` name =
+      (DeliberatelyUnsupported, "size erasure or explicit size semantics are not implemented")
+  | "Agda.Builtin.Coinduction" `Text.isPrefixOf` name =
+      (DeliberatelyUnsupported, "coinductive productivity/bisimulation lowering is not implemented")
+  | "Agda.Builtin.IO" `Text.isPrefixOf` name =
+      (DeliberatelyUnsupported, "IO effect and foreign-call correspondence is not implemented")
+  | otherwise =
+      (SupportedCorrespondence, "import does not itself cross a declared semantic boundary")
+  where
+    name = unCanonicalName imported
+    unsupportedBuiltinFamilies =
+      [ "Agda.Builtin.Unit"
+      , "Agda.Builtin.Sigma"
+      , "Agda.Builtin.List"
+      , "Agda.Builtin.Maybe"
+      , "Agda.Builtin.Int"
+      , "Agda.Builtin.Char"
+      , "Agda.Builtin.String"
+      , "Agda.Builtin.FromNat"
+      , "Agda.Builtin.FromNeg"
+      , "Agda.Builtin.FromString"
+      ]
+
 builtinStatus :: BuiltinId -> (SupportClassification, Text)
 builtinStatus builtin
   | Map.member builtin platformMappings =
-      (SupportedCorrespondence, "registered semantic identity; correspondence still case-specific")
+      (SupportedCorrespondence, "registered semantic identity; correspondence remains case-specific")
   | otherwise =
       (DeliberatelyUnsupported, "builtin identity is absent from the effective platform registry")
 
