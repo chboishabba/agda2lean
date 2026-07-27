@@ -1,0 +1,1 @@
+../fixtures/handwritten/AgdaMirror/Moonshine.lean

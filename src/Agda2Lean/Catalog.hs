@@ -1,3 +1,4 @@
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StrictData #-}
@@ -387,7 +388,7 @@ catalogSchemaBytes =
 
 catalogSchemaStatements :: [Query]
 catalogSchemaStatements =
-  [ Query (Text.encodeUtf8 statement)
+  [ Query statement
   | statement <-
       map Text.strip
         (Text.splitOn ";" (Text.decodeUtf8 catalogSchemaBytes))

@@ -5,6 +5,9 @@ root_dir="$(git rev-parse --show-toplevel)"
 comparison_dir="${root_dir}/comparison"
 lake_bin="${root_dir}/.elan/toolchains/leanprover--lean4---v4.28.0/bin/lake"
 
+# shellcheck source=scripts/lib/progress.sh
+source "${root_dir}/scripts/lib/progress.sh"
+
 if [[ ! -x "${lake_bin}" ]]; then
   lake_bin="lake"
 fi
@@ -14,8 +17,8 @@ if [[ ! -f "${comparison_dir}/Moonshine.lean" ]]; then
 fi
 
 cd "${comparison_dir}"
-"${lake_bin}" update
-"${lake_bin}" build
+progress_run "comparison / lake update" "${lake_bin}" update
+progress_run "comparison / lake build" "${lake_bin}" build
 
 generated_receipt="$(mktemp)"
 normalized_generated="$(mktemp)"
@@ -35,9 +38,10 @@ generated_constants=(
   'Moonshine.embedding'
 )
 
-"${lake_bin}" env lean --run "${root_dir}/lean/Agda2Lean/Manifest.lean" \
-  --module Moonshine \
-  "${generated_constants[@]}" > "${generated_receipt}"
+progress_run "comparison / manifest extraction" \
+  "${lake_bin}" env lean --run "${root_dir}/lean/Agda2Lean/Manifest.lean" \
+    --module Moonshine \
+    "${generated_constants[@]}" > "${generated_receipt}"
 
 normalize_receipt() {
   awk -F'\t' -v OFS='\t' '
@@ -88,6 +92,12 @@ normalize_receipt() {
       } else if (normalized == "Moonshine.isJFixed") {
         normalized = "Moonshine.is-j-fixed"
       } else if (normalized == "Moonshine.observerIsJFixed") {
+        normalized = "Moonshine.observer-is-j-fixed"
+      } else if (normalized == "Moonshine.the_observer") {
+        normalized = "Moonshine.the-observer"
+      } else if (normalized == "Moonshine.is_j_fixed") {
+        normalized = "Moonshine.is-j-fixed"
+      } else if (normalized == "Moonshine.observer_is_j_fixed") {
         normalized = "Moonshine.observer-is-j-fixed"
       } else if (normalized == "Moonshine.rep_dim_check") {
         normalized = "Moonshine.rep-dim-check"

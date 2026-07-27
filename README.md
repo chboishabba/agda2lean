@@ -30,6 +30,8 @@ The first two vertical tranches provide:
 - direct-dependency and feature discovery from elaborated terms;
 - Agda 2.9 `@rewrite` and Cubical boundary detection;
 - an Agda-shaped Lean facade emitter with escaped original names;
+- a versioned platform builtin registry, with active Agda builtin names
+  lowered to language-neutral IR identities;
 - explicit reconstruction diagnostics and a fail-closed emission mode;
 - a pinned DASHI Agda/Lean mirror registry and parallel Moonshine smoke test;
 - round-trip, determinism, deduplication and corruption tests.

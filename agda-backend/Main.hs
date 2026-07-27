@@ -1,3 +1,4 @@
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -14,8 +15,11 @@ import qualified Agda.Syntax.Literal as Agda
 import Agda.Syntax.Position
 import Agda.Syntax.TopLevelModuleName (TopLevelModuleName)
 import qualified Agda.TypeChecking.Monad.Base as Agda
+import qualified Agda.TypeChecking.Primitive as AgdaPrimitive
+import qualified Agda.Syntax.Builtin as AgdaBuiltin
 import qualified Agda.Utils.Maybe.Strict as Strict
-import Agda.Compiler.Backend
+import Agda.Compiler.Backend hiding (canonicalName)
+import Agda.Compiler.Common (compileDir, curIF)
 import Agda.Interaction.Options (ArgDescr (..), OptDescr (..))
 import Agda.Main (runAgda)
 import Agda.Utils.FileName (filePath)
@@ -27,6 +31,8 @@ import Control.DeepSeq (NFData)
 import Control.Monad.IO.Class (liftIO)
 import qualified Data.ByteString as ByteString
 import qualified Data.Set as Set
+import qualified Data.Map.Strict as Map
+import Data.Maybe (mapMaybe)
 import qualified Data.Text as Text
 import qualified Data.Text.IO as Text
 import qualified Data.Vector as Vector
@@ -43,6 +49,7 @@ instance NFData Options
 
 data ModuleEnvironment = ModuleEnvironment
   { environmentName :: CanonicalModuleName
+  , environmentBuiltins :: Map.Map Core.CanonicalName Core.BuiltinId
   }
 
 newtype CanonicalModuleName = CanonicalModuleName
@@ -88,10 +95,12 @@ preModule' ::
   Maybe FilePath ->
   TCM (Recompile ModuleEnvironment ())
 preModule' _ _ moduleName' _ =
-  pure
-    ( Recompile
-        (ModuleEnvironment (CanonicalModuleName (canonicalName moduleName')))
-    )
+  do
+    builtins <- activeBuiltinBindings
+    pure
+      ( Recompile
+          (ModuleEnvironment (CanonicalModuleName (canonicalName moduleName')) builtins)
+      )
 
 postModule' ::
   Options ->
@@ -111,6 +120,7 @@ postModule' _ ModuleEnvironment {..} _ moduleName' declarations = do
       snapshot =
         Snapshot.AgdaModule
           { Snapshot.agdaModuleName = unCanonicalModuleName environmentName
+          , Snapshot.agdaModuleBuiltins = environmentBuiltins
           , Snapshot.agdaModuleImports = imported
           , Snapshot.agdaModuleDeclarations = Vector.fromList declarations
           }
@@ -141,11 +151,13 @@ compileDefinition ::
   IsMain ->
   Agda.Definition ->
   TCM Snapshot.AgdaDeclaration
-compileDefinition _ _ _ definition =
+compileDefinition _ ModuleEnvironment {..} _ definition =
   let extractedType = snapshotType (Agda.defType definition)
    in pure
     Snapshot.AgdaDeclaration
       { Snapshot.agdaDeclarationName = canonicalName (Agda.defName definition)
+      , Snapshot.agdaDeclarationBuiltin =
+          Map.lookup (canonicalName (Agda.defName definition)) environmentBuiltins
       , Snapshot.agdaDeclarationRole = declarationRole (Agda.theDef definition)
       , Snapshot.agdaDeclarationUniverses =
           Vector.fromList (Set.toAscList (universeNames extractedType))
@@ -162,6 +174,36 @@ compileDefinition _ _ _ definition =
       , Snapshot.agdaDeclarationFeatures = definitionFeatures definition
       , Snapshot.agdaDeclarationSource = sourceSpan (Agda.defName definition)
       }
+
+activeBuiltinBindings :: TCM (Map.Map Core.CanonicalName Core.BuiltinId)
+activeBuiltinBindings =
+  Map.fromList . mapMaybe id <$> mapM resolve builtinPairs
+  where
+    resolve (builtin, target) = do
+      name <- AgdaPrimitive.getBuiltinName builtin
+      pure ((\resolved -> (canonicalName resolved, target)) <$> name)
+
+    builtinPairs =
+      [ (AgdaBuiltin.builtinNat, Core.BuiltinNat)
+      , (AgdaBuiltin.builtinZero, Core.BuiltinNatZero)
+      , (AgdaBuiltin.builtinSuc, Core.BuiltinNatSuc)
+      , (AgdaBuiltin.builtinNatPlus, Core.BuiltinNatAdd)
+      , (AgdaBuiltin.builtinNatMinus, Core.BuiltinNatSub)
+      , (AgdaBuiltin.builtinNatTimes, Core.BuiltinNatMul)
+      , (AgdaBuiltin.builtinNatEquals, Core.BuiltinNatEq)
+      , (AgdaBuiltin.builtinNatLess, Core.BuiltinNatLt)
+      , (AgdaBuiltin.builtinBool, Core.BuiltinBool)
+      , (AgdaBuiltin.builtinTrue, Core.BuiltinBoolTrue)
+      , (AgdaBuiltin.builtinFalse, Core.BuiltinBoolFalse)
+      , (AgdaBuiltin.builtinEquality, Core.BuiltinEquality)
+      , (AgdaBuiltin.builtinRefl, Core.BuiltinRefl)
+      , (AgdaBuiltin.builtinLevel, Core.BuiltinLevel)
+      , (AgdaBuiltin.builtinLevelZero, Core.BuiltinLevelZero)
+      , (AgdaBuiltin.builtinLevelSuc, Core.BuiltinLevelSuc)
+      , (AgdaBuiltin.builtinLevelMax, Core.BuiltinLevelMax)
+      , (AgdaBuiltin.builtinProp, Core.BuiltinProp)
+      , (AgdaBuiltin.builtinSet, Core.BuiltinSet)
+      ]
 
 snapshotType :: Agda.Type -> Snapshot.AgdaTerm
 snapshotType = snapshotTerm . Agda.unEl
@@ -317,7 +359,7 @@ visibility info =
 relevance :: Agda.ArgInfo -> Core.Relevance
 relevance info =
   case Agda.getRelevance info of
-    Agda.Relevant -> Core.Relevant
+    Agda.Relevant _ -> Core.Relevant
     _ -> Core.Irrelevant
 
 declarationRole :: Agda.Defn -> Core.DeclarationRole

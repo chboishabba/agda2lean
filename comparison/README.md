@@ -25,3 +25,13 @@ The first acceptance gate is Moonshine:
 - the generated Moonshine receipt is normalized and compared against
   `receipts/moonshine.receipt.tsv` for statement/dependency and axiom-closure
   regression coverage.
+
+The next semantic gate is handled by `scripts/check-moonshine-correspondence.sh`:
+
+- generated and handwritten Moonshine manifests are extracted in the same
+  workspace;
+- statement shape and direct type dependencies are compared after name
+  normalization;
+- `value-direct` rows are recorded as informational proof-machinery context;
+- `Lean.sorryAx` in either axiom closure is a hard failure;
+- the script emits phase heartbeats while Lake or Lean work is still running.

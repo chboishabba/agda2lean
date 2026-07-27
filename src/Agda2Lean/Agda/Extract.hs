@@ -1,3 +1,4 @@
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StrictData #-}
@@ -48,17 +49,19 @@ data ExtractState = ExtractState
   , extractNextBinder :: !Word64
   , extractTerms :: !(Map TermId CoreTerm)
   , extractInterned :: !(Map CoreTerm TermId)
+  , extractBuiltins :: !(Map CanonicalName BuiltinId)
   }
 
 type ExtractM = StateT ExtractState (Either ExtractionError)
 
-initialState :: ExtractState
-initialState =
+initialState :: Map CanonicalName BuiltinId -> ExtractState
+initialState builtins =
   ExtractState
     { extractNextTerm = 0
     , extractNextBinder = 0
     , extractTerms = Map.empty
     , extractInterned = Map.empty
+    , extractBuiltins = builtins
     }
 
 extractModule :: AgdaModule -> Either ExtractionError ModuleIR
@@ -66,7 +69,7 @@ extractModule source = do
   (declarations, finalState) <-
     runStateT
       (mapM extractDeclaration (Vector.toList (agdaModuleDeclarations source)))
-      initialState
+      (initialState (agdaModuleBuiltins source))
   let result =
         ModuleIR
           { moduleSchemaVersion = currentSchemaVersion
@@ -93,6 +96,7 @@ extractDeclaration source = do
   pure
     CoreDeclaration
       { declarationName = agdaDeclarationName source
+      , declarationBuiltin = agdaDeclarationBuiltin source
       , declarationRole = agdaDeclarationRole source
       , declarationUniverses = agdaDeclarationUniverses source
       , declarationModuleParameters = Vector.fromList parameters
@@ -131,18 +135,41 @@ extractTerm owner context = \case
     bodyId <- extractTerm owner (binder : context) body
     intern (Lam binder bodyId)
   AgdaDef name eliminations -> do
-    case equalityArguments name eliminations of
-      Just (type', left, right) -> do
-        typeId <- extractTerm owner context type'
-        leftId <- extractTerm owner context left
-        rightId <- extractTerm owner context right
-        intern (Equality typeId leftId rightId)
-      Nothing -> do
-        headId <- intern (Axiom name)
+    builtins <- gets extractBuiltins
+    case Map.lookup name builtins of
+      Just BuiltinEquality ->
+        case equalityArguments eliminations of
+          Just (type', left, right) -> do
+            typeId <- extractTerm owner context type'
+            leftId <- extractTerm owner context left
+            rightId <- extractTerm owner context right
+            intern (Equality typeId leftId rightId)
+          Nothing -> do
+            headId <- intern (Builtin BuiltinEquality)
+            applyEliminations owner context headId eliminations
+      Just builtin -> do
+        headId <- intern (Builtin builtin)
         applyEliminations owner context headId eliminations
+      Nothing ->
+        case legacyEqualityArguments name eliminations of
+          Just (type', left, right) -> do
+            typeId <- extractTerm owner context type'
+            leftId <- extractTerm owner context left
+            rightId <- extractTerm owner context right
+            intern (Equality typeId leftId rightId)
+          Nothing -> do
+            headId <- intern (Axiom name)
+            applyEliminations owner context headId eliminations
   AgdaCon name eliminations -> do
     (arguments, residual) <- extractApplyArguments owner context eliminations
-    headId <- intern (Constructor name (Vector.fromList arguments))
+    builtins <- gets extractBuiltins
+    headId <-
+      intern
+        ( maybe
+            (Constructor name (Vector.fromList arguments))
+            Builtin
+            (Map.lookup name builtins)
+        )
     applyEliminations owner context headId residual
   AgdaPi sourceBinder body -> do
     typeId <- extractTerm owner context (agdaBinderType sourceBinder)
@@ -312,21 +339,21 @@ safeSegment value =
    in if Text.null result then "unnamed" else result
 
 equalityArguments ::
+  Vector.Vector AgdaElimination ->
+  Maybe (AgdaTerm, AgdaTerm, AgdaTerm)
+equalityArguments eliminations =
+  case reverse
+      [ term
+      | AgdaApply _ _ term <- Vector.toList eliminations
+      ] of
+    right : left : type' : _ -> Just (type', left, right)
+    _ -> Nothing
+
+legacyEqualityArguments ::
   CanonicalName ->
   Vector.Vector AgdaElimination ->
   Maybe (AgdaTerm, AgdaTerm, AgdaTerm)
-equalityArguments name eliminations
-  | unCanonicalName name
-      `elem`
-        ["Agda.Builtin.Equality._≡_"] =
-      case
-          [ term
-          | AgdaApply _ _ term <- Vector.toList eliminations
-          ]
-        of
-          arguments
-            | length arguments >= 3 ->
-                case reverse arguments of
-                  right : left : type' : _ -> Just (type', left, right)
-          _ -> Nothing
+legacyEqualityArguments name eliminations
+  | unCanonicalName name == "Agda.Builtin.Equality._≡_" =
+      equalityArguments eliminations
   | otherwise = Nothing

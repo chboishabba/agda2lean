@@ -42,7 +42,7 @@ import qualified Data.Vector as Vector
 import Data.Word (Word16)
 
 codecVersion :: Word16
-codecVersion = 2
+codecVersion = 3
 
 encodeModule :: ModuleIR -> ByteString
 encodeModule = toStrictByteString . encodeModuleIR
@@ -243,6 +243,8 @@ encodeCoreTerm = \case
       <> encodeTermId right
   Axiom name ->
     encodeListLen 2 <> encodeWord 9 <> encodeCanonicalName name
+  Builtin builtin ->
+    encodeListLen 2 <> encodeWord 11 <> encodeBuiltinId builtin
   Extension extension ->
     encodeListLen 2 <> encodeWord 10 <> encodeExtension extension
 
@@ -264,6 +266,7 @@ decodeCoreTerm = do
     (8, 4) -> Equality <$> decodeTermId <*> decodeTermId <*> decodeTermId
     (9, 2) -> Axiom <$> decodeCanonicalName
     (10, 2) -> Extension <$> decodeExtension
+    (11, 2) -> Builtin <$> decodeBuiltinId
     _ -> fail "invalid CoreTerm encoding"
 
 encodeDeclarationRole :: DeclarationRole -> Encoding
@@ -298,8 +301,9 @@ decodeSourceSpan = do
 
 encodeDeclaration :: CoreDeclaration -> Encoding
 encodeDeclaration declaration =
-  encodeListLen 10
+  encodeListLen 11
     <> encodeCanonicalName (declarationName declaration)
+    <> encodeMaybe encodeBuiltinId (declarationBuiltin declaration)
     <> encodeDeclarationRole (declarationRole declaration)
     <> encodeVector encodeString (declarationUniverses declaration)
     <> encodeVector encodeBinder (declarationModuleParameters declaration)
@@ -312,9 +316,10 @@ encodeDeclaration declaration =
 
 decodeDeclaration :: Decoder s CoreDeclaration
 decodeDeclaration = do
-  expectListLen 10
+  expectListLen 11
   CoreDeclaration
     <$> decodeCanonicalName
+    <*> decodeMaybe decodeBuiltinId
     <*> decodeDeclarationRole
     <*> decodeVector decodeString
     <*> decodeVector decodeBinder
@@ -324,6 +329,12 @@ decodeDeclaration = do
     <*> decodeSet decodeFeature
     <*> decodeSourceSpan
     <*> decodeMappingMode
+
+encodeBuiltinId :: BuiltinId -> Encoding
+encodeBuiltinId = encodeWord . fromIntegral . fromEnum
+
+decodeBuiltinId :: Decoder s BuiltinId
+decodeBuiltinId = decodeBoundedEnum "builtin id"
 
 encodeMaybe :: (a -> Encoding) -> Maybe a -> Encoding
 encodeMaybe _ Nothing = encodeListLen 0
@@ -373,7 +384,7 @@ encodeMap encodeKey encodeValue entries =
       (Map.toAscList entries)
 
 decodeMap ::
-  Ord key =>
+  (Eq value, Ord key) =>
   Decoder s key ->
   Decoder s value ->
   Decoder s (Map.Map key value)
