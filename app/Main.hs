@@ -7,7 +7,7 @@ import Agda2Lean.Catalog
 import Agda2Lean.Classify (classifyModule)
 import Agda2Lean.Codec (decodeModule, encodeModule)
 import Agda2Lean.Hash (hashBytes, renderObjectHash)
-import Agda2Lean.IR (CanonicalName (..), CoreDeclaration (..), ModuleIR (..))
+import Agda2Lean.IR (BuiltinId, CanonicalName (..), CoreDeclaration (..), ModuleIR (..))
 import Agda2Lean.Lean.Emit
 import Agda2Lean.Platform
 import Agda2Lean.Registry.File (loadRegistryLayer)
@@ -174,6 +174,7 @@ runCommand (EmitLean inputPath leanPath diagnosticsPath receiptPath registryOpti
   effectiveRegistry <- loadEffectiveRegistry registryOptions
   bytes <- ByteString.readFile inputPath
   moduleIR <- either (ioError . userError . Text.unpack) pure (decodeModule bytes)
+  ensureRegistryCoversModule effectiveRegistry moduleIR
   let output =
         emitLeanModule
           defaultEmitOptions
@@ -261,6 +262,24 @@ loadEffectiveRegistry options = do
     (ioError . userError . unlines . map show)
     pure
     (composeRegistryLayers mode layers)
+
+ensureRegistryCoversModule :: Map.Map BuiltinId PlatformMapping -> ModuleIR -> IO ()
+ensureRegistryCoversModule registry moduleIR =
+  case
+      [ builtin
+      | declaration <- Vector.toList (moduleDeclarations moduleIR)
+      , Just builtin <- [declarationBuiltin declaration]
+      , Map.notMember builtin registry
+      ]
+    of
+      [] -> pure ()
+      missing ->
+        ioError
+          ( userError
+              ( "effective registry does not cover encountered builtins: "
+                  <> unwords (map show missing)
+              )
+          )
 
 ensureReceiptComplete :: ModuleIR -> LeanOutput -> IO ()
 ensureReceiptComplete moduleIR output =
