@@ -6,7 +6,7 @@ import Agda2Lean.IR (BuiltinId (..))
 import Agda2Lean.Platform
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as Text
-import Test.Tasty (defaultMain, testGroup)
+import Test.Tasty (TestTree, defaultMain, testGroup)
 import Test.Tasty.HUnit
 
 main :: IO ()
@@ -21,7 +21,7 @@ main =
         ]
     )
 
-inventoryTests :: Test.Tasty.TestTree
+inventoryTests :: TestTree
 inventoryTests =
   testGroup
     "coverage inventory"
@@ -39,7 +39,7 @@ inventoryTests =
         assertBool "equality entry missing" ("BuiltinEquality" `Text.isInfixOf` renderBuiltinCoverageInventory)
     ]
 
-compatibilityTests :: Test.Tasty.TestTree
+compatibilityTests :: TestTree
 compatibilityTests =
   testGroup
     "version compatibility"
@@ -59,7 +59,7 @@ compatibilityTests =
           result -> assertFailure ("unexpected compatibility result: " <> show result)
     ]
 
-compositionTests :: Test.Tasty.TestTree
+compositionTests :: TestTree
 compositionTests =
   testGroup
     "validated registry composition"
@@ -111,7 +111,7 @@ compositionTests =
     isFixture (FixtureRuleOutsideTestMode _) = True
     isFixture _ = False
 
-determinismTests :: Test.Tasty.TestTree
+determinismTests :: TestTree
 determinismTests =
   testGroup
     "determinism"
