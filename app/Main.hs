@@ -9,6 +9,7 @@ import Agda2Lean.Codec (decodeModule, encodeModule)
 import Agda2Lean.Hash (renderObjectHash)
 import Agda2Lean.IR (CanonicalName (..))
 import Agda2Lean.Lean.Emit
+import Agda2Lean.Platform
 import Agda2Lean.Render
 import Control.Exception (bracket)
 import Control.Monad (unless)
@@ -17,9 +18,10 @@ import qualified Data.Text as Text
 import qualified Data.Text.IO as Text
 import qualified Data.Vector as Vector
 import Options.Applicative
-import System.Directory (createDirectoryIfMissing)
+import System.Directory (createDirectoryIfMissing, renameFile)
 import System.Exit (exitFailure)
-import System.FilePath (takeDirectory)
+import System.FilePath (takeDirectory, takeFileName)
+import System.IO (hClose, openTempFile)
 
 data Command
   = Init GlobalOptions
@@ -27,6 +29,7 @@ data Command
   | Classify FilePath FilePath
   | GetModule GlobalOptions Text.Text FilePath
   | EmitLean FilePath FilePath FilePath (Maybe FilePath) Bool
+  | BuiltinInventory FilePath
   | Inspect GlobalOptions (Maybe Text.Text)
   | Verify GlobalOptions
 
@@ -42,53 +45,38 @@ parserInfo =
   info
     (commandParser <**> helper)
     ( fullDesc
-        <> progDesc
-          "Store and inspect canonical typed Agda-to-Lean IR"
+        <> progDesc "Store and inspect canonical typed Agda-to-Lean IR"
         <> header "agda2lean"
     )
 
 commandParser :: Parser Command
 commandParser =
   hsubparser
-    ( command
-        "init"
-        (info (Init <$> globalOptions) (progDesc "Initialize a catalog"))
+    ( command "init" (info (Init <$> globalOptions) (progDesc "Initialize a catalog"))
         <> command
           "classify"
-          ( info
-              (Classify <$> inputOption <*> outputOption)
-              (progDesc "Classify features and write canonical CBOR")
-          )
+          (info (Classify <$> inputOption <*> outputOption) (progDesc "Classify features and write canonical CBOR"))
         <> command
           "put-module"
-          ( info
-              (PutModule <$> globalOptions <*> inputOption)
-              (progDesc "Validate and store a CBOR ModuleIR")
-          )
+          (info (PutModule <$> globalOptions <*> inputOption) (progDesc "Validate and store a CBOR ModuleIR"))
         <> command
           "get-module"
-          ( info
-              (GetModule <$> globalOptions <*> moduleOption <*> outputOption)
-              (progDesc "Write a module's canonical CBOR object")
-          )
+          (info (GetModule <$> globalOptions <*> moduleOption <*> outputOption) (progDesc "Write a module's canonical CBOR object"))
         <> command
           "emit-lean"
+          (info emitLeanParser (progDesc "Emit an Agda-shaped Lean facade and diagnostics"))
+        <> command
+          "builtin-inventory"
           ( info
-              emitLeanParser
-              (progDesc "Emit an Agda-shaped Lean facade and diagnostics")
+              (BuiltinInventory <$> outputOption)
+              (progDesc "Write the deterministic builtin coverage inventory")
           )
         <> command
           "inspect"
-          ( info
-              (Inspect <$> globalOptions <*> optional moduleOption)
-              (progDesc "Render catalog or module summaries")
-          )
+          (info (Inspect <$> globalOptions <*> optional moduleOption) (progDesc "Render catalog or module summaries"))
         <> command
           "verify"
-          ( info
-              (Verify <$> globalOptions)
-              (progDesc "Verify hashes, CBOR and canonical encoding")
-          )
+          (info (Verify <$> globalOptions) (progDesc "Verify hashes, CBOR and canonical encoding"))
     )
 
 globalOptions :: Parser GlobalOptions
@@ -103,13 +91,11 @@ globalOptions =
 
 inputOption :: Parser FilePath
 inputOption =
-  strOption
-    (long "input" <> short 'i' <> metavar "PATH" <> help "Input CBOR path")
+  strOption (long "input" <> short 'i' <> metavar "PATH" <> help "Input CBOR path")
 
 outputOption :: Parser FilePath
 outputOption =
-  strOption
-    (long "output" <> short 'o' <> metavar "PATH" <> help "Output CBOR path")
+  strOption (long "output" <> short 'o' <> metavar "PATH" <> help "Output path")
 
 moduleOption :: Parser Text.Text
 moduleOption =
@@ -121,16 +107,15 @@ emitLeanParser :: Parser Command
 emitLeanParser =
   EmitLean
     <$> inputOption
-    <*> strOption
-      (long "lean-output" <> metavar "PATH" <> help "Generated Lean file")
-    <*> strOption
-      (long "diagnostics" <> metavar "PATH" <> help "Tabular diagnostics file")
+    <*> strOption (long "lean-output" <> metavar "PATH" <> help "Generated Lean file")
+    <*> strOption (long "diagnostics" <> metavar "PATH" <> help "Tabular diagnostics file")
     <*> optional
-      (strOption
-        ( long "builtin-receipt"
-            <> metavar "PATH"
-            <> help "Optional tabular builtin semantic receipt file"
-        ))
+      ( strOption
+          ( long "builtin-receipt"
+              <> metavar "PATH"
+              <> help "Optional provenance-bound builtin semantic receipt file"
+          )
+      )
     <*> switch
       ( long "fail-on-reconstruction"
           <> help "Do not emit sorry at reconstruction boundaries"
@@ -139,35 +124,25 @@ emitLeanParser =
 runCommand :: Command -> IO ()
 runCommand (Classify inputPath outputPath) = do
   bytes <- ByteString.readFile inputPath
-  moduleIR <-
-    either
-      (ioError . userError . Text.unpack)
-      pure
-      (decodeModule bytes)
+  moduleIR <- either (ioError . userError . Text.unpack) pure (decodeModule bytes)
   createDirectoryIfMissing True (takeDirectory outputPath)
   ByteString.writeFile outputPath (encodeModule (classifyModule moduleIR))
+runCommand (BuiltinInventory outputPath) =
+  writeTextAtomic outputPath (inventoryBundle renderBuiltinCoverageInventory)
 runCommand (EmitLean inputPath leanPath diagnosticsPath receiptPath failOnReconstruction) = do
+  ensureCompatible currentVersionContext
   bytes <- ByteString.readFile inputPath
-  moduleIR <-
-    either
-      (ioError . userError . Text.unpack)
-      pure
-      (decodeModule bytes)
+  moduleIR <- either (ioError . userError . Text.unpack) pure (decodeModule bytes)
   let output =
         emitLeanModule
-          defaultEmitOptions
-            { emitSorryBodies = not failOnReconstruction
-            }
+          defaultEmitOptions {emitSorryBodies = not failOnReconstruction}
           moduleIR
-  createDirectoryIfMissing True (takeDirectory leanPath)
-  createDirectoryIfMissing True (takeDirectory diagnosticsPath)
-  Text.writeFile leanPath (leanSource output)
-  Text.writeFile diagnosticsPath (renderDiagnostics (leanDiagnostics output))
+  writeTextAtomic leanPath (leanSource output)
+  writeTextAtomic diagnosticsPath (renderDiagnostics (leanDiagnostics output))
   case receiptPath of
     Nothing -> pure ()
-    Just path -> do
-      createDirectoryIfMissing True (takeDirectory path)
-      Text.writeFile path (renderBuiltinReceipts (leanBuiltinReceipts output))
+    Just path ->
+      writeTextAtomic path (receiptBundle (renderBuiltinReceipts (leanBuiltinReceipts output)))
   whenErrors (leanDiagnostics output)
 runCommand command' = do
   let options = commandOptions command'
@@ -180,11 +155,7 @@ runCommand command' = do
         Text.putStr (renderCatalogStats stats)
       PutModule _ inputPath -> do
         bytes <- ByteString.readFile inputPath
-        moduleIR <-
-          either
-            (ioError . userError . Text.unpack)
-            pure
-            (decodeModule bytes)
+        moduleIR <- either (ioError . userError . Text.unpack) pure (decodeModule bytes)
         objectHash <- storeModule catalog moduleIR
         Text.putStrLn ("stored " <> renderObjectHash objectHash)
       GetModule _ name outputPath -> do
@@ -214,10 +185,9 @@ runCommand command' = do
         issues <- verifyCatalog catalog
         Text.putStr (renderCatalogIssues issues)
         unless (null issues) exitFailure
-      Classify _ _ ->
-        ioError (userError "internal error: classify opened the catalog")
-      EmitLean _ _ _ _ _ ->
-        ioError (userError "internal error: emit-lean opened the catalog")
+      Classify _ _ -> ioError (userError "internal error: classify opened the catalog")
+      EmitLean _ _ _ _ _ -> ioError (userError "internal error: emit-lean opened the catalog")
+      BuiltinInventory _ -> ioError (userError "internal error: builtin-inventory opened the catalog")
 
 commandOptions :: Command -> GlobalOptions
 commandOptions = \case
@@ -225,9 +195,43 @@ commandOptions = \case
   PutModule options _ -> options
   Classify _ _ -> error "classify does not use a catalog"
   EmitLean _ _ _ _ _ -> error "emit-lean does not use a catalog"
+  BuiltinInventory _ -> error "builtin-inventory does not use a catalog"
   GetModule options _ _ -> options
   Inspect options _ -> options
   Verify options -> options
+
+receiptBundle :: Text.Text -> Text.Text
+receiptBundle body = provenanceHeader <> body
+
+inventoryBundle :: Text.Text -> Text.Text
+inventoryBundle body = provenanceHeader <> body
+
+provenanceHeader :: Text.Text
+provenanceHeader =
+  Text.unlines
+    [ "# receipt-schema\t" <> Text.pack (show receiptSchemaVersion)
+    , "# codec\t" <> Text.pack (show (versionCodec currentVersionContext))
+    , "# registry\t" <> platformRegistryVersion
+    , "# registry-digest\t" <> platformRegistryDigest
+    , "# agda-backend\t" <> versionAgdaBackend currentVersionContext
+    , "# lean-target\t" <> versionLeanTarget currentVersionContext
+    ]
+
+ensureCompatible :: VersionContext -> IO ()
+ensureCompatible context =
+  case checkVersionCompatibility context of
+    Compatible -> pure ()
+    MigrationRequired message -> ioError (userError (Text.unpack message))
+    Incompatible message -> ioError (userError (Text.unpack message))
+
+writeTextAtomic :: FilePath -> Text.Text -> IO ()
+writeTextAtomic path contents = do
+  let directory = takeDirectory path
+  createDirectoryIfMissing True directory
+  (temporaryPath, handle) <- openTempFile directory (takeFileName path <> ".tmp")
+  Text.hPutStr handle contents
+  hClose handle
+  renameFile temporaryPath path
 
 whenErrors :: Vector.Vector LeanDiagnostic -> IO ()
 whenErrors diagnostics =
