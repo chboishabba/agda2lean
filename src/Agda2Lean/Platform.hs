@@ -36,10 +36,9 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as Text
-import qualified Data.Text.Encoding as Text
+import qualified Data.Text.Encoding as TextEncoding
 import Data.Word (Word16)
 
--- | Whether a lowering is known to extend the target axiom surface.
 data AxiomEffect = NoAxioms | MayIntroduceAxioms
   deriving stock (Eq, Ord, Show)
 
@@ -51,7 +50,6 @@ data ComputationTreatment
   | AxiomaticCompatibility
   deriving stock (Eq, Ord, Show)
 
--- | The semantic kind expected for a registered Agda entity.
 data BuiltinEntityKind
   = BuiltinDatatype
   | BuiltinConstructor
@@ -60,9 +58,6 @@ data BuiltinEntityKind
   | BuiltinSort
   deriving stock (Bounded, Enum, Eq, Ord, Show)
 
--- | Registry scopes are semantic authority levels, not ordinary shadowing
--- precedence. Platform entries are protected; fixture replacement is only
--- available in explicit test mode.
 data RegistryScope
   = PlatformProtected
   | LibraryScope
@@ -109,18 +104,12 @@ currentVersionContext =
 
 checkVersionCompatibility :: VersionContext -> Compatibility
 checkVersionCompatibility context
-  | versionCodec context /= codecVersion =
-      Incompatible "unsupported IR codec version"
-  | versionReceiptSchema context > receiptSchemaVersion =
-      Incompatible "receipt schema is newer than this compiler"
-  | versionReceiptSchema context < receiptSchemaVersion =
-      MigrationRequired "receipt schema migration required"
-  | versionRegistry context /= platformRegistryVersion =
-      Incompatible "builtin registry version mismatch"
-  | versionAgdaBackend context /= "2.9.0" =
-      Incompatible "unsupported Agda backend version"
-  | versionLeanTarget context /= leanTargetVersion =
-      Incompatible "unsupported Lean target platform"
+  | versionCodec context /= codecVersion = Incompatible "unsupported IR codec version"
+  | versionReceiptSchema context > receiptSchemaVersion = Incompatible "receipt schema is newer than this compiler"
+  | versionReceiptSchema context < receiptSchemaVersion = MigrationRequired "receipt schema migration required"
+  | versionRegistry context /= platformRegistryVersion = Incompatible "builtin registry version mismatch"
+  | versionAgdaBackend context /= "2.9.0" = Incompatible "unsupported Agda backend version"
+  | versionLeanTarget context /= leanTargetVersion = Incompatible "unsupported Lean target platform"
   | otherwise = Compatible
 
 data PlatformMapping = PlatformMapping
@@ -153,10 +142,6 @@ data RegistryIssue
   | KindMismatch BuiltinId BuiltinEntityKind BuiltinEntityKind
   deriving stock (Eq, Ord, Show)
 
--- | Compose layers from lowest to highest authority. Ordinary library and
--- project layers may fill extension points but may not silently override an
--- existing mapping. Fixture replacement is test-only and can never replace a
--- platform-protected identity.
 composeRegistryLayers :: RegistryMode -> [RegistryLayer] -> Either [RegistryIssue] (Map BuiltinId PlatformMapping)
 composeRegistryLayers mode layers =
   case concatMap validateLayer layers <> compositionIssues of
@@ -164,8 +149,7 @@ composeRegistryLayers mode layers =
     issues -> Left (sortOn show issues)
   where
     composed = foldl' insertLayer Map.empty layers
-    insertLayer table layer =
-      foldl' (insertRule layer) table (registryLayerMappings layer)
+    insertLayer table layer = foldl' (insertRule layer) table (registryLayerMappings layer)
     insertRule layer table mapping =
       case Map.lookup (platformBuiltin mapping) table of
         Nothing -> Map.insert (platformBuiltin mapping) mapping table
@@ -219,8 +203,6 @@ composeRegistryLayers mode layers =
           , mapping <- registryLayerMappings layer
           ]
 
--- This is the reviewed semantic dictionary. Names are diagnostics only;
--- extraction selects entries by BuiltinId.
 platformMappings :: Map BuiltinId PlatformMapping
 platformMappings = Map.fromList [(platformBuiltin mapping, mapping) | mapping <- mappings]
   where
@@ -276,12 +258,9 @@ platformRegistryLayer =
     , registryLayerMappings = Map.elems platformMappings
     }
 
--- | A content digest binds the semantic version to the actual canonical rule
--- set. Map ordering cannot affect this digest.
 platformRegistryDigest :: Text
 platformRegistryDigest =
-  renderObjectHash
-    (hashBytes (Text.encodeUtf8 canonicalRegistryText))
+  renderObjectHash (hashBytes (TextEncoding.encodeUtf8 canonicalRegistryText))
   where
     canonicalRegistryText =
       Text.unlines
@@ -312,9 +291,6 @@ data BuiltinCoverage = BuiltinCoverage
   }
   deriving stock (Eq, Ord, Show)
 
--- | Complete inventory for the BuiltinId surface supported by this compiler.
--- Unsupported future Agda builtins must first receive an explicit BuiltinId and
--- inventory entry; absence is not treated as a fallback mapping.
 builtinCoverageInventory :: [BuiltinCoverage]
 builtinCoverageInventory =
   [ BuiltinCoverage
@@ -343,9 +319,7 @@ renderBuiltinCoverageInventory =
               , coverageStatus coverage
               , coverageLeanStrategy coverage
               , Text.pack (show (coverageComputation coverage))
-              , if null (coverageAxiomDelta coverage)
-                  then "-"
-                  else Text.intercalate "," (coverageAxiomDelta coverage)
+              , if null (coverageAxiomDelta coverage) then "-" else Text.intercalate "," (coverageAxiomDelta coverage)
               , if coverageOverrideAllowed coverage then "yes" else "no"
               ]
           | coverage <- sortOn coverageBuiltin builtinCoverageInventory
