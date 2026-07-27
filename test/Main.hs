@@ -194,6 +194,23 @@ leanEmitterTests =
               ((== "A2L-E-BUILTIN") . diagnosticCode)
               (leanDiagnostics output)
           )
+    , testCase "emission uses the supplied effective registry" $ do
+        let declaration = Vector.head (moduleDeclarations builtinEqualityModule)
+            blockedModule =
+              builtinEqualityModule
+                { moduleDeclarations =
+                    Vector.singleton declaration {declarationBuiltin = Just BuiltinLevelZero}
+                }
+            output =
+              emitLeanModule
+                defaultEmitOptions {emitRegistry = Map.empty}
+                blockedModule
+            receipt = Vector.head (leanBuiltinReceipts output)
+        builtinReceiptStatus receipt @?= "blocked"
+        builtinReceiptRule receipt @?= Nothing
+        assertBool
+          "unregistered registry mapping did not fail closed"
+          (Vector.any ((== "A2L-E-BUILTIN") . diagnosticCode) (leanDiagnostics output))
     , testCase "pins the Agda.Builtin.Nat OfNat shim" $ do
         let output = emitLeanModule defaultEmitOptions builtinNatModule
         assertBool

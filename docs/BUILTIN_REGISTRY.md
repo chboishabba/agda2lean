@@ -28,6 +28,13 @@ The supported compiler surface is exactly the `BuiltinId` enumeration. `builtinC
 
 `renderBuiltinCoverageInventory` provides deterministic TSV output. A future Agda builtin is not silently inferred from its printed name: it must first receive an explicit `BuiltinId`, inventory classification, and registry rule or an explicit blocked status.
 
+The broader Agda 2.9 declaration universe is audited by
+`scripts/check-agda-builtin-inventory.sh`. It reads `Agda.Syntax.Builtin` from
+the pinned Cabal source cache (or `AGDA_SOURCE_DIR`) and reports every Agda
+`BuiltinId` and `PrimitiveId`, marking entries that are not registered by the
+backend as `unsupported-or-unmapped`. This keeps the upstream inventory
+derived and reproducible rather than hand-maintained.
+
 ## Registry layers
 
 Layers are validated semantic scopes:
@@ -47,6 +54,8 @@ Layers are validated semantic scopes:
 - mapping/layer scope inconsistencies.
 
 Composition is deterministic with respect to map and rule insertion order.
+The Lean emitter receives the resulting effective `Map BuiltinId PlatformMapping`
+through `EmitOptions`; it does not perform an implicit platform-only lookup.
 
 ## Compatibility tuple
 
