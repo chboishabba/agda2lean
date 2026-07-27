@@ -10,13 +10,10 @@ cleanup() {
 }
 trap cleanup EXIT
 
+bash "${root_dir}/scripts/check-conformance-manifest.sh"
 "${cabal_wrapper}" build --flag agda-backend exe:agda2lean-agda exe:agda2lean-support
 backend_bin="$("${cabal_wrapper}" list-bin --flag agda-backend exe:agda2lean-agda)"
 support_bin="$("${cabal_wrapper}" list-bin --flag agda-backend exe:agda2lean-support)"
-
-passed=0
-failed=0
-surveyed=0
 
 # Boundary cases are retained as declared negative fixtures. They may need
 # feature-specific libraries or flags, so this first cut does not silently
@@ -24,10 +21,6 @@ surveyed=0
 tail -n +2 "${manifest}" |
   while IFS=$'\t' read -r id source expected phase features oracle rationale; do
     source_path="${root_dir}/${source}"
-    if [[ ! -f "${source_path}" ]]; then
-      echo "missing conformance source: ${source}" >&2
-      exit 1
-    fi
 
     if [[ "${phase}" == "boundary" ]]; then
       printf 'DECLARED\t%s\t%s\t%s\n' "${id}" "${expected}" "${source}"
