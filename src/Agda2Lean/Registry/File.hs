@@ -6,7 +6,6 @@ module Agda2Lean.Registry.File
   , renderRegistryLayer
   ) where
 
-import Agda2Lean.IR (BuiltinId)
 import Agda2Lean.Platform
 import Data.List (find)
 import Data.Text (Text)
