@@ -938,3 +938,370 @@ resolveBuiltin sourceName
 Likewise, generated shims should come from the mapping/compatibility layer rather than bespoke emitter branches.
 
 So the short answer is: we hand-author the small semantic dictionary once, because that choice cannot safely be inferred. Identification, lowering, adapter generation, occurrence handling and verification should all be automatic.
+
+
+This moves the project from a **validated vertical slice** to an **auditable validated vertical slice**.
+
+The receipt gap was the most important immediate weakness because the compiler could previously make a correct builtin decision without producing durable evidence of what semantic substitution occurred. That is now substantially resolved.
+
+The effective pipeline is now:
+
+[
+\text{Agda elaboration}
+\to
+\text{canonical BuiltinId}
+\to
+\text{registry resolution}
+\to
+\text{Lean lowering}
+\to
+\text{structured semantic receipt}.
+]
+
+And the receipt records the critical judgement:
+
+[
+(\text{source binding},
+\text{canonical identity},
+\text{lowering policy})
+\vdash
+(\text{Lean target},
+\text{computation class},
+\Delta\text{axioms},
+\text{status}).
+]
+
+## What is now genuinely complete
+
+The builtin architecture now has all three parts required for a credible compiler subsystem:
+
+1. **Semantic identification**
+   Agda’s elaborated builtin environment determines identity.
+
+2. **Explicit lowering policy**
+   The versioned platform registry determines the Lean representation.
+
+3. **Auditable evidence**
+   Structured receipts expose the selected rule, computation treatment, axiom effect and outcome.
+
+The successful and blocked-mapping tests are especially important. They establish the beginning of a proper failure contract:
+
+[
+\text{no valid semantic lowering}
+\Longrightarrow
+\text{blocked translation with evidence},
+]
+
+rather than fallback name matching or plausible-looking output.
+
+So the current state is best described as:
+
+> **Core builtin mechanism implemented, end-to-end validated, and minimally audit-complete; generality and defensive completeness remain.**
+
+## How I would reprioritise the remaining work
+
+The listed items are right, but their dependency order can be sharpened.
+
+### 1. Complete the builtin inventory first
+
+Before implementing more registry layering, enumerate the actual semantic surface that must be governed.
+
+For every builtin exposed by the supported Agda version, record:
+
+* Agda builtin key;
+* resolved entity kind;
+* definition or constructor identity;
+* intended `BuiltinId`;
+* current support status;
+* Lean target strategy;
+* computation classification;
+* potential axiom delta;
+* whether project override is meaningful or forbidden.
+
+Suggested statuses:
+
+[
+{
+\text{native},
+\text{structural},
+\text{compatibility},
+\text{opaque},
+\text{unsupported},
+\text{unclassified}
+}.
+]
+
+This inventory will expose whether the current `BuiltinId` datatype and receipt schema are sufficient before registry composition makes them harder to change.
+
+It also turns “builtin coverage” into something measurable:
+
+[
+\text{coverage}
+===============
+
+\frac{
+#(\text{classified and intentionally handled builtins})
+}{
+#(\text{Agda builtins in supported scope})
+}.
+]
+
+Unsupported may still count as intentionally handled when the compiler blocks it explicitly.
+
+### 2. Define version compatibility before layered registries
+
+The system now has at least several version-bearing surfaces:
+
+* codec version;
+* platform registry version;
+* receipt schema version;
+* Agda backend/API version;
+* potentially Lean target-platform version.
+
+Their relationship should become explicit before additional registry layers are introduced.
+
+A compatibility judgement could look like:
+
+[
+C(
+v_{\mathrm{codec}},
+v_{\mathrm{registry}},
+v_{\mathrm{receipt}},
+v_{\mathrm{Agda}},
+v_{\mathrm{Lean}}
+)
+\in
+{
+\text{compatible},
+\text{migration-required},
+\text{unsupported}
+}.
+]
+
+The compiler should reject combinations that it cannot interpret safely. A warning is insufficient when the incompatibility may alter builtin semantics.
+
+It would also be useful for each receipt file to include the complete compatibility tuple, not merely the registry version.
+
+### 3. Expand adversarial tests around invariants
+
+The next tests should be organised by invariant, rather than as isolated malformed examples.
+
+#### Identity invariant
+
+A registered Agda builtin must resolve to exactly one compatible canonical identity.
+
+Test:
+
+* duplicate canonical assignments;
+* conflicting bindings;
+* definition/constructor confusion;
+* unknown builtin keys;
+* missing canonical identity.
+
+#### Kind invariant
+
+A rule must only apply to the semantic kind it declares.
+
+Test:
+
+* datatype rule applied to constructor;
+* constructor rule applied to definition;
+* primitive operation mapped as ordinary constant;
+* equality eliminator confused with equality datatype.
+
+#### Registry integrity invariant
+
+Registry composition must not silently change protected semantics.
+
+Test:
+
+* duplicate rule in one layer;
+* conflict across layers;
+* project override of protected platform builtin;
+* fixture override without explicit test-only mode;
+* equivalent duplicate entries with unstable selection order.
+
+#### Version invariant
+
+Serialized or configured semantic information must only be consumed under a declared compatible version.
+
+Test:
+
+* old codec with new `BuiltinId`;
+* unknown registry version;
+* receipt schema mismatch;
+* supported migration path;
+* registry hash differing under the same nominal version.
+
+#### Name-independence invariant
+
+Names must not regain semantic authority.
+
+Test:
+
+* ordinary definition named like a builtin;
+* builtin renamed or imported through an alias;
+* project-local shadowing;
+* two modules exposing conventional builtin-like names;
+* expected Agda builtin whose printed name changes.
+
+#### Determinism invariant
+
+Equivalent inputs must produce byte-stable or canonically equivalent receipts.
+
+Test:
+
+* registry insertion order;
+* map traversal order;
+* module elaboration order;
+* repeated execution;
+* output path differences;
+* parallel extraction, if applicable.
+
+These tests define what the architecture promises, not merely what the current implementation happens to do.
+
+### 4. Then implement layered registries
+
+Once the inventory and invariants are clear, layered registries can be introduced safely.
+
+I would avoid treating this as unrestricted override precedence. Instead, define rule classes.
+
+For example:
+
+[
+\operatorname{scope}(r)
+\in
+{
+\text{platform-protected},
+\text{library},
+\text{project},
+\text{fixture-only}
+}.
+]
+
+Then registry composition is validated, not merely left-biased:
+
+[
+R_{\mathrm{effective}}
+======================
+
+\operatorname{validateCompose}
+(
+R_P,R_L,R_J,R_F
+).
+]
+
+Possible policies:
+
+* platform-protected rules cannot be replaced;
+* library rules may fill unmapped non-platform identities;
+* project rules may refine declared extension points;
+* fixture rules require explicit test mode;
+* every shadow or replacement generates a receipt event;
+* conflicts fail before extraction or emission begins.
+
+This is safer than:
+
+```text
+fixture > project > library > platform
+```
+
+because conventional precedence alone permits semantically foundational mappings to be replaced accidentally.
+
+### 5. Deterministic receipts should include provenance integrity
+
+Determinism should cover both ordering and policy identity.
+
+A receipt should ideally carry:
+
+* schema version;
+* compiler version;
+* Agda version;
+* Lean platform version;
+* codec version;
+* registry semantic version;
+* registry content digest;
+* input/module identity;
+* deterministic sequence of decisions.
+
+The registry digest matters because two different registries must not both claim to be, for example, `lean4-platform-v1`.
+
+A useful invariant is:
+
+[
+\operatorname{sameReceiptContext}(x,y)
+\land
+\operatorname{sameInput}(x,y)
+\implies
+\operatorname{canonicalReceipt}(x)
+==================================
+
+\operatorname{canonicalReceipt}(y).
+]
+
+Receipt output should also be atomic so a failed translation cannot leave a valid-looking partial receipt unless the format explicitly marks it incomplete.
+
+## A subtle remaining question: receipt completeness
+
+The new `--builtin-receipt PATH` flag makes receipt generation optional. That is reasonable for ordinary use, but the project should decide whether certain modes require it.
+
+Possible policy:
+
+* normal compilation: optional;
+* comparison/correspondence gate: required;
+* release verification: required;
+* audit mode: required and failure-sensitive;
+* fixture tests: required where builtin lowering occurs.
+
+Otherwise, the audit mechanism exists but could be absent precisely in the workflows where evidence matters most.
+
+There should also be a clear answer to:
+
+> Does the receipt contain only successfully lowered builtins, or every encountered builtin decision, including blocked, unsupported and unused-but-resolved bindings?
+
+For audit purposes, every encountered decision is stronger.
+
+## Artifact cleanup
+
+The generated files should be divided into four classes:
+
+| Class                            | Treatment          |
+| -------------------------------- | ------------------ |
+| Source-controlled golden fixture | Commit             |
+| Durable audit example            | Commit selectively |
+| Reproducible compiler output     | Ignore             |
+| Failed/temporary build material  | Remove             |
+
+A representative builtin receipt may deserve to be retained as a golden fixture, particularly if it tests deterministic serialization. Arbitrary local receipts should not.
+
+The cleanup should also confirm that running the documented validation commands from a clean checkout does not dirty the worktree except where explicitly expected.
+
+## Definition of done for this phase
+
+I would consider the builtin subsystem hardened when all of the following hold:
+
+[
+\begin{aligned}
+&\text{all supported Agda builtins are inventoried};\
+&\text{every inventory entry is lowered or explicitly blocked};\
+&\text{registry conflicts fail deterministically};\
+&\text{kind mismatches fail before Lean emission};\
+&\text{version compatibility is checked};\
+&\text{receipts are deterministic and provenance-bound};\
+&\text{platform semantics cannot be silently overridden};\
+&\text{clean-checkout validation passes};\
+&\text{the intentional changes are committed}.
+\end{aligned}
+]
+
+The most efficient next cut is therefore:
+
+1. builtin coverage inventory;
+2. compatibility model and registry digest;
+3. invariant-driven adversarial tests;
+4. validated layered registry composition;
+5. deterministic receipt golden tests;
+6. artifact cleanup and clean-checkout validation;
+7. commit.
+
+The compiler is no longer proving that the hybrid design works. It is now proving that the design remains safe when mappings are incomplete, conflicting, version-skewed or adversarial.
