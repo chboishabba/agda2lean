@@ -81,6 +81,7 @@ executable agda2lean
         agda2lean,
         base >=4.17 && <5,
         bytestring >=0.11,
+        containers >=0.6,
         directory >=1.3,
         filepath >=1.4,
         optparse-applicative >=0.18,
