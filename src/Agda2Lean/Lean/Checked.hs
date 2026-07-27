@@ -8,18 +8,22 @@ import Agda2Lean.IR
 import Agda2Lean.Lean.Emit
 import Agda2Lean.Platform
 import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Vector as Vector
 
 -- | The fail-closed production boundary for Lean emission. It verifies the
 -- complete compatibility tuple, requires an effective mapping for every
--- encountered builtin identity, and checks that every builtin decision produced
--- exactly one semantic receipt.
+-- declaration-level and term-level builtin identity, prevents the low-level
+-- renderer from observing a target that differs from the effective registry,
+-- and checks that every builtin declaration decision produced exactly one
+-- semantic receipt.
 emitLeanModuleChecked :: VersionContext -> EmitOptions -> ModuleIR -> Either Text LeanOutput
 emitLeanModuleChecked versionContext options moduleIR = do
   ensureCompatible versionContext
   ensureRegistryCoverage options moduleIR
+  ensureRendererConsistency options moduleIR
   let output = emitLeanModule options moduleIR
   ensureReceiptCompleteness moduleIR output
   pure output
@@ -43,10 +47,49 @@ ensureRegistryCoverage options moduleIR =
   where
     missing =
       [ builtin
-      | declaration <- Vector.toList (moduleDeclarations moduleIR)
-      , Just builtin <- [declarationBuiltin declaration]
+      | builtin <- Set.toAscList (encounteredBuiltins moduleIR)
       , Map.notMember builtin (emitRegistry options)
       ]
+
+-- The low-level term renderer currently obtains the native platform target
+-- directly. Checked emission proves that this cannot bypass an injected
+-- effective registry: every term-level builtin must resolve to the same target
+-- in both views before rendering starts.
+ensureRendererConsistency :: EmitOptions -> ModuleIR -> Either Text ()
+ensureRendererConsistency options moduleIR =
+  case divergent of
+    [] -> Right ()
+    _ ->
+      Left
+        ( "effective registry diverges from the term renderer for builtins: "
+            <> Text.unwords (map (Text.pack . show) divergent)
+        )
+  where
+    divergent =
+      [ builtin
+      | builtin <- Set.toAscList (termBuiltins moduleIR)
+      , effectiveTarget builtin /= platformTargetFor builtin
+      ]
+    effectiveTarget builtin = platformTarget <$> Map.lookup builtin (emitRegistry options)
+    platformTargetFor builtin = platformTarget <$> lookupPlatformMapping builtin
+
+encounteredBuiltins :: ModuleIR -> Set.Set BuiltinId
+encounteredBuiltins moduleIR = declarationBuiltins moduleIR <> termBuiltins moduleIR
+
+declarationBuiltins :: ModuleIR -> Set.Set BuiltinId
+declarationBuiltins moduleIR =
+  Set.fromList
+    [ builtin
+    | declaration <- Vector.toList (moduleDeclarations moduleIR)
+    , Just builtin <- [declarationBuiltin declaration]
+    ]
+
+termBuiltins :: ModuleIR -> Set.Set BuiltinId
+termBuiltins moduleIR =
+  Set.fromList
+    [ builtin
+    | Builtin builtin <- Map.elems (moduleTerms moduleIR)
+    ]
 
 ensureReceiptCompleteness :: ModuleIR -> LeanOutput -> Either Text ()
 ensureReceiptCompleteness moduleIR output
