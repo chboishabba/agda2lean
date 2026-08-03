@@ -12,19 +12,27 @@ extra-source-files:
     docs/BUILTIN_REGISTRY.md
     docs/adr/0001-storage-and-canonical-encoding.md
     docs/adr/0002-elaborated-extraction-and-lean-facades.md
+    docs/adr/0003-project-closure-and-hermetic-builds.md
     cabal.project.agda-2.9
+    scripts/a2l_project.py
+    scripts/jfixedpoint_receipt.py
     scripts/check-agda-builtin-inventory.sh
     scripts/cabal-agda-2.9.sh
     scripts/check-agda-backend.sh
     scripts/check-comparison.sh
     scripts/check-monsterstate-correspondence.sh
     scripts/check-moonshine-correspondence.sh
+    scripts/check-jfixedpoint.sh
     scripts/stage-comparison.sh
+    comparison/receipts/jfixedpoint.project-dependencies.tsv
     fixtures/dashi-mirrors.toml
     lean/Agda2Lean/Manifest.lean
     schema/catalog.sql
     test/agda/Identity.agda
+    test/agda/JFixedPoint.agda
     test/agda/LocalRewrite.agda
+    test/lean/JFixedPointCheck.lean
+    test/test_a2l_project.py
 
 flag agda-backend
     description: Build the version-pinned Agda 2.9 elaboration backend

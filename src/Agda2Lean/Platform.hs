@@ -2,7 +2,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module Agda2Lean.Platform
-  ( AxiomEffect (..)
+  ( ArgumentPolicy (..)
+  , AxiomEffect (..)
   , BuiltinCoverage (..)
   , BuiltinEntityKind (..)
   , Compatibility (..)
@@ -38,6 +39,16 @@ import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as TextEncoding
 import Data.Word (Word16)
+import qualified Data.Vector as Vector
+
+-- | How an elaborated Agda application spine is projected into a Lean
+-- application spine.  Indices are zero-based and may reorder as well as erase
+-- source arguments.  The source arity makes partial applications fail closed
+-- instead of accidentally changing their meaning.
+data ArgumentPolicy
+  = PreserveArguments
+  | ProjectArguments Word16 (Vector.Vector Word16)
+  deriving stock (Eq, Ord, Show)
 
 data AxiomEffect = NoAxioms | MayIntroduceAxioms
   deriving stock (Bounded, Enum, Eq, Ord, Show)
@@ -68,13 +79,13 @@ data RegistryScope
 data RegistryMode = ProductionMode | TestMode
   deriving stock (Bounded, Enum, Eq, Ord, Show)
 
--- Keep the public label stable for codec-v3 receipts. Semantic identity is
--- additionally bound to 'platformRegistryDigest'.
+-- Registry v2 adds argument-spine policies and the List semantic family.
+-- Semantic identity is additionally bound to 'platformRegistryDigest'.
 platformRegistryVersion :: Text
-platformRegistryVersion = "lean4-platform-v1"
+platformRegistryVersion = "lean4-platform-v2"
 
 receiptSchemaVersion :: Word16
-receiptSchemaVersion = 2
+receiptSchemaVersion = 3
 
 leanTargetVersion :: Text
 leanTargetVersion = "lean4"
@@ -117,6 +128,7 @@ data PlatformMapping = PlatformMapping
   , platformAxiomEffect :: AxiomEffect
   , platformAxiomDelta :: [Text]
   , platformEntityKind :: BuiltinEntityKind
+  , platformArgumentPolicy :: ArgumentPolicy
   , platformScope :: RegistryScope
   }
   deriving stock (Eq, Ord, Show)
@@ -136,6 +148,7 @@ data RegistryIssue
   | FixtureRuleOutsideTestMode BuiltinId
   | ScopeMismatch Text BuiltinId RegistryScope RegistryScope
   | KindMismatch BuiltinId BuiltinEntityKind BuiltinEntityKind
+  | InvalidArgumentPolicy Text BuiltinId ArgumentPolicy
   deriving stock (Eq, Ord, Show)
 
 composeRegistryLayers :: RegistryMode -> [RegistryLayer] -> Either [RegistryIssue] (Map BuiltinId PlatformMapping)
@@ -176,7 +189,7 @@ composeRegistryLayers mode layers =
       where
         builtin = platformBuiltin mapping
 
-    validateLayer layer = duplicateIssues <> scopeIssues <> fixtureIssues
+    validateLayer layer = duplicateIssues <> scopeIssues <> fixtureIssues <> argumentPolicyIssues
       where
         counts = Map.fromListWith (+) [(platformBuiltin mapping, 1 :: Int) | mapping <- registryLayerMappings layer]
         duplicateIssues =
@@ -196,6 +209,16 @@ composeRegistryLayers mode layers =
           , mode /= TestMode
           , mapping <- registryLayerMappings layer
           ]
+        argumentPolicyIssues =
+          [ InvalidArgumentPolicy (registryLayerName layer) (platformBuiltin mapping) policy
+          | mapping <- registryLayerMappings layer
+          , let policy = platformArgumentPolicy mapping
+          , not (validArgumentPolicy policy)
+          ]
+
+    validArgumentPolicy PreserveArguments = True
+    validArgumentPolicy (ProjectArguments arity order) =
+      all (< arity) (Vector.toList order)
 
 platformMappings :: Map BuiltinId PlatformMapping
 platformMappings = Map.fromList [(platformBuiltin mapping, mapping) | mapping <- mappings]
@@ -212,8 +235,14 @@ platformMappings = Map.fromList [(platformBuiltin mapping, mapping) | mapping <-
       , entry BuiltinBool "Agda.Builtin.Bool.Bool" "Bool" "exact-inductive" BuiltinDatatype
       , entry BuiltinBoolTrue "Agda.Builtin.Bool.Bool.true" "true" "constructor" BuiltinConstructor
       , entry BuiltinBoolFalse "Agda.Builtin.Bool.Bool.false" "false" "constructor" BuiltinConstructor
+      , entryWithPolicy BuiltinList "Agda.Builtin.List.List" "List" "exact-inductive" BuiltinDatatype 2 [1]
+      -- Agda's internal Con spine has already removed datatype parameters:
+      -- [] has no arguments and _∷_ carries only head and tail.  The List
+      -- type constructor itself still needs its hidden level projected away.
+      , entry BuiltinListNil "Agda.Builtin.List.List.[]" "List.nil" "constructor" BuiltinConstructor
+      , entry BuiltinListCons "Agda.Builtin.List.List._∷_" "List.cons" "constructor" BuiltinConstructor
       , entry BuiltinEquality "Agda.Builtin.Equality._≡_" "Eq" "ordinary-equality" BuiltinDatatype
-      , entry BuiltinRefl "Agda.Builtin.Equality._≡_.refl" "Eq.refl" "constructor" BuiltinConstructor
+      , entryWithPolicy BuiltinRefl "Agda.Builtin.Equality._≡_.refl" "Eq.refl" "constructor" BuiltinConstructor 3 [1, 2]
       , entry BuiltinLevel "Agda.Primitive.Level" "Type" "universe" BuiltinSort
       , entry BuiltinLevelZero "Agda.Primitive.lzero" "0" "universe" BuiltinPrimitive
       , entry BuiltinLevelSuc "Agda.Primitive.lsuc" "+ 1" "universe" BuiltinPrimitive
@@ -223,7 +252,15 @@ platformMappings = Map.fromList [(platformBuiltin mapping, mapping) | mapping <-
       ]
 
     entry builtin audit target mode kind =
-      PlatformMapping builtin audit target mode (computationFor builtin) NoAxioms [] kind PlatformProtected
+      entryWithArgumentPolicy builtin audit target mode kind PreserveArguments
+
+    entryWithPolicy builtin audit target mode kind arity order =
+      entryWithArgumentPolicy
+        builtin audit target mode kind
+        (ProjectArguments arity (Vector.fromList order))
+
+    entryWithArgumentPolicy builtin audit target mode kind argumentPolicy =
+      PlatformMapping builtin audit target mode (computationFor builtin) NoAxioms [] kind argumentPolicy PlatformProtected
 
     computationFor BuiltinEquality = TheoremBacked
     computationFor BuiltinRefl = TheoremBacked
@@ -249,6 +286,7 @@ platformRegistryDigest = renderObjectHash (hashBytes (TextEncoding.encodeUtf8 ca
             , Text.pack (show (platformAxiomEffect mapping))
             , Text.intercalate "," (platformAxiomDelta mapping)
             , Text.pack (show (platformEntityKind mapping))
+            , Text.pack (show (platformArgumentPolicy mapping))
             , Text.pack (show (platformScope mapping))
             ]
         | (builtin, mapping) <- Map.toAscList platformMappings
@@ -262,6 +300,7 @@ data BuiltinCoverage = BuiltinCoverage
   , coverageLeanStrategy :: Text
   , coverageComputation :: ComputationTreatment
   , coverageAxiomDelta :: [Text]
+  , coverageArgumentPolicy :: ArgumentPolicy
   , coverageOverrideAllowed :: Bool
   }
   deriving stock (Eq, Ord, Show)
@@ -270,7 +309,8 @@ builtinCoverageInventory :: [BuiltinCoverage]
 builtinCoverageInventory =
   [ BuiltinCoverage builtin (platformAuditName mapping) (platformEntityKind mapping)
       "native" (platformMode mapping) (platformComputation mapping)
-      (platformAxiomDelta mapping) (platformScope mapping /= PlatformProtected)
+      (platformAxiomDelta mapping) (platformArgumentPolicy mapping)
+      (platformScope mapping /= PlatformProtected)
   | builtin <- [minBound .. maxBound]
   , let mapping = platformMappings Map.! builtin
   ]
@@ -278,7 +318,7 @@ builtinCoverageInventory =
 renderBuiltinCoverageInventory :: Text
 renderBuiltinCoverageInventory =
   Text.unlines
-    ( "builtin-id\tagda-key\tentity-kind\tstatus\tlean-strategy\tcomputation\taxiom-delta\toverride-allowed"
+    ( "builtin-id\tagda-key\tentity-kind\tstatus\tlean-strategy\tcomputation\taxiom-delta\targument-policy\toverride-allowed"
         : [ Text.intercalate "\t"
               [ Text.pack (show (coverageBuiltin coverage))
               , coverageAgdaKey coverage
@@ -287,6 +327,7 @@ renderBuiltinCoverageInventory =
               , coverageLeanStrategy coverage
               , Text.pack (show (coverageComputation coverage))
               , if null (coverageAxiomDelta coverage) then "-" else Text.intercalate "," (coverageAxiomDelta coverage)
+              , Text.pack (show (coverageArgumentPolicy coverage))
               , if coverageOverrideAllowed coverage then "yes" else "no"
               ]
           | coverage <- sortOn coverageBuiltin builtinCoverageInventory

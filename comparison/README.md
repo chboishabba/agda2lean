@@ -35,3 +35,15 @@ The next semantic gate is handled by `scripts/check-moonshine-correspondence.sh`
 - `value-direct` rows are recorded as informational proof-machinery context;
 - `Lean.sorryAx` in either axiom closure is a hard failure;
 - the script emits phase heartbeats while Lake or Lean work is still running.
+
+The proof-producing `JFixedPoint` tranche is intentionally stricter than the
+historical mirror checks. `scripts/check-jfixedpoint.sh` uses the pinned fixture
+in `test/agda/`, generates a standalone Lake workspace through the transitive
+project driver, validates the original Agda public surface (including all four
+`fixed-*` theorems), audits Lean axiom closures, and kernel-checks the expected
+`contract-all tower-3` reduction. The handwritten mirror's stronger
+`stack_converges` theorem remains a target-only strengthening rather than a
+substitute for those facade declarations. The checked-in
+`receipts/jfixedpoint.project-dependencies.tsv` is the reviewed project-local
+boundary policy; the gate combines it with Agda dependency comments and Lean's
+elaborated manifest to produce `build/jfixedpoint-gate/jfixedpoint.correspondence.tsv`.

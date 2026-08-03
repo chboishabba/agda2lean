@@ -179,7 +179,7 @@ cabal run agda2lean -- emit-lean \
   --lean-output build/lean/Module.lean \
   --diagnostics build/lean/Module.diagnostics.tsv
 
-# CI/promotion mode: do not permit reconstruction sorries.
+# Deprecated spelling retained as a no-op; emission is already fail-closed.
 cabal run agda2lean -- emit-lean \
   --input build/ir/Module/module.a2l.cbor \
   --lean-output build/lean/Module.lean \
@@ -188,6 +188,52 @@ cabal run agda2lean -- emit-lean \
 ```
 
 The pinned Agda backend check is intentionally expensive on a cold cache because Cabal builds the audited Agda 2.9 source dependency tree before it runs `Identity.agda`. In this environment the end-to-end `scripts/check-agda-backend.sh` smoke test took about 17 minutes.
+
+### Translate a project closure
+
+The project driver computes a transitive import closure, schedules independent
+modules at dependency-DAG frontiers, and writes a self-contained Lean 4.28 Lake
+workspace. Agda interfaces live in a writable cache keyed by the Agda/backend
+toolchain and the complete source closure; source checkouts are not modified.
+
+```sh
+backend="$(scripts/cabal-agda-2.9.sh list-bin --flag agda-backend exe:agda2lean-agda)"
+emitter="$(scripts/cabal-agda-2.9.sh list-bin --flag agda-backend exe:agda2lean)"
+
+scripts/a2l_project.py plan \
+  --source-root path/to/agda/project \
+  --entry My.Project.Root
+
+scripts/a2l_project.py build \
+  --source-root path/to/agda/project \
+  --entry My.Project.Root \
+  --backend "$backend" \
+  --emitter "$emitter" \
+  --workspace build/generated-project \
+  --cache-root build/cache \
+  --jobs 4 \
+  --lake lake
+```
+
+`--jobs` bounds the number of independent Agda processes. Each process uses
+`-j1`, avoiding nested parallelism and the memory spikes that otherwise become
+severe on large libraries. Re-running an unchanged closure reuses its isolated
+Agda interfaces and IR.
+
+Emission is fail-closed by default. The deprecated
+`--fail-on-reconstruction` spelling is accepted as a no-op for old scripts;
+only the explicit `--allow-reconstruction` testing option permits legacy
+`sorry`-backed reconstruction.
+
+The strict first proof-producing gate is:
+
+```sh
+bash scripts/check-jfixedpoint.sh
+```
+
+It regenerates twice, builds under Lean 4.28, checks every original public
+declaration, rejects all generated axioms and `sorry`, and asks the kernel to
+reduce `contract-all tower-3` to `[196884, 196884, 196884]`.
 
 `put-module` validates and re-encodes the supplied object before storing it, so
 non-canonical or trailing input cannot acquire an authoritative object hash.

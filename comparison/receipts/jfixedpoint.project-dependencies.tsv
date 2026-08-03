@@ -1,0 +1,14 @@
+# Project-local direct dependencies required on both elaborated sides.
+declaration	dependency
+JFixedPoint.unit-converges	JFixedPoint.contract
+JFixedPoint.unit-converges	JFixedPoint.unit-obs
+JFixedPoint.fixed-0	JFixedPoint.contract
+JFixedPoint.fixed-0	JFixedPoint.stack
+JFixedPoint.fixed-1	JFixedPoint.contract
+JFixedPoint.fixed-1	JFixedPoint.stack
+JFixedPoint.fixed-2	JFixedPoint.contract
+JFixedPoint.fixed-2	JFixedPoint.stack
+JFixedPoint.fixed-100	JFixedPoint.contract
+JFixedPoint.fixed-100	JFixedPoint.stack
+JFixedPoint.all-196884	JFixedPoint.contract-all
+JFixedPoint.all-196884	JFixedPoint.tower-3

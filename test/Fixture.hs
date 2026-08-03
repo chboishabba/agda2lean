@@ -53,7 +53,7 @@ exampleModule =
             , declarationUniverses = Vector.empty
             , declarationModuleParameters = Vector.empty
             , declarationType = TermId 2
-            , declarationBody = Just (TermId 3)
+            , declarationDefinition = TermDefinition (TermId 3)
             , declarationDependencies =
                 Set.singleton (CanonicalName "DASHI.Example.Carrier")
             , declarationFeatures =

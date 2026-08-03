@@ -72,6 +72,180 @@ kind = "theorem"
 expected = "pass"
 
 [[fixture]]
+id = "jfixed-point"
+tier = "pilot"
+
+[fixture.agda]
+repo = "https://github.com/chboishabba/dashi_agda.git"
+ref = "72ae53834be4cd6df842d80fae97c892990ccef6"
+module = "JFixedPoint"
+path = "JFixedPoint.agda"
+include-dirs = ["."]
+
+[fixture.lean]
+repo = "https://github.com/chboishabba/dashi_lean4.git"
+ref = "55132524c2e132c0b86c17eeb60d7e39c3af08b6"
+module = "AgdaMirror.JFixedPoint"
+toolchain = "leanprover/lean4:v4.28.0"
+files = ["JFixedPoint.lean => AgdaMirror/JFixedPoint.lean"]
+
+[fixture.policy]
+statement = "lean-defeq"
+axioms = "target-subset"
+allowed-lean-axioms = []
+
+[[fixture.mapping]]
+from = "Agda.Builtin.Nat"
+to = "Nat"
+kind = "platform"
+
+[[fixture.mapping]]
+from = "Agda.Builtin.Equality"
+to = "Eq"
+kind = "platform"
+
+[[fixture.mapping]]
+from = "Agda.Builtin.Bool"
+to = "Bool"
+kind = "platform"
+
+[[fixture.mapping]]
+from = "Agda.Builtin.List"
+to = "List"
+kind = "platform"
+
+# The handwritten mirror strengthens the four finite checks to the target-only
+# theorem stack_converges. These semantic mappings permit delegation, but the
+# generated facade must still expose every original fixed-* declaration below.
+[[fixture.mapping]]
+from = "JFixedPoint.fixed-0"
+to = "AgdaMirror.JFixedPoint.stack_converges"
+kind = "semantic"
+
+[[fixture.mapping]]
+from = "JFixedPoint.fixed-1"
+to = "AgdaMirror.JFixedPoint.stack_converges"
+kind = "semantic"
+
+[[fixture.mapping]]
+from = "JFixedPoint.fixed-2"
+to = "AgdaMirror.JFixedPoint.stack_converges"
+kind = "semantic"
+
+[[fixture.mapping]]
+from = "JFixedPoint.fixed-100"
+to = "AgdaMirror.JFixedPoint.stack_converges"
+kind = "semantic"
+
+[[fixture.declaration]]
+agda = "JFixedPoint.Observation"
+lean = "JFixedPoint.Observation"
+kind = "structure"
+expected = "pass"
+
+[[fixture.declaration]]
+agda = "JFixedPoint.Observation.e47"
+lean = "JFixedPoint.Observation.e47"
+kind = "function"
+expected = "pass"
+
+[[fixture.declaration]]
+agda = "JFixedPoint.Observation.e59"
+lean = "JFixedPoint.Observation.e59"
+kind = "function"
+expected = "pass"
+
+[[fixture.declaration]]
+agda = "JFixedPoint.Observation.e71"
+lean = "JFixedPoint.Observation.e71"
+kind = "function"
+expected = "pass"
+
+[[fixture.declaration]]
+agda = "JFixedPoint.contract"
+lean = "JFixedPoint.contract"
+kind = "function"
+expected = "pass"
+
+[[fixture.declaration]]
+agda = "JFixedPoint.unit-obs"
+lean = "JFixedPoint.unit-obs"
+kind = "function"
+expected = "pass"
+
+[[fixture.declaration]]
+agda = "JFixedPoint.unit-converges"
+lean = "JFixedPoint.unit-converges"
+kind = "theorem"
+expected = "pass"
+
+[[fixture.declaration]]
+agda = "JFixedPoint.stack"
+lean = "JFixedPoint.stack"
+kind = "function"
+expected = "pass"
+
+[[fixture.declaration]]
+agda = "JFixedPoint.fixed-0"
+lean = "JFixedPoint.fixed-0"
+kind = "theorem"
+expected = "pass"
+
+[[fixture.declaration]]
+agda = "JFixedPoint.fixed-1"
+lean = "JFixedPoint.fixed-1"
+kind = "theorem"
+expected = "pass"
+
+[[fixture.declaration]]
+agda = "JFixedPoint.fixed-2"
+lean = "JFixedPoint.fixed-2"
+kind = "theorem"
+expected = "pass"
+
+[[fixture.declaration]]
+agda = "JFixedPoint.fixed-100"
+lean = "JFixedPoint.fixed-100"
+kind = "theorem"
+expected = "pass"
+
+[[fixture.declaration]]
+agda = "JFixedPoint.Tower"
+lean = "JFixedPoint.Tower"
+kind = "function"
+expected = "pass"
+
+[[fixture.declaration]]
+agda = "JFixedPoint.expand"
+lean = "JFixedPoint.expand"
+kind = "function"
+expected = "pass"
+
+[[fixture.declaration]]
+agda = "JFixedPoint.contract-all"
+lean = "JFixedPoint.contract-all"
+kind = "function"
+expected = "pass"
+
+[[fixture.declaration]]
+agda = "JFixedPoint.tower-1"
+lean = "JFixedPoint.tower-1"
+kind = "function"
+expected = "pass"
+
+[[fixture.declaration]]
+agda = "JFixedPoint.tower-3"
+lean = "JFixedPoint.tower-3"
+kind = "function"
+expected = "pass"
+
+[[fixture.declaration]]
+agda = "JFixedPoint.all-196884"
+lean = "JFixedPoint.all-196884"
+kind = "theorem"
+expected = "pass"
+
+[[fixture]]
 id = "crtj-fixed-point"
 tier = "pilot"
 

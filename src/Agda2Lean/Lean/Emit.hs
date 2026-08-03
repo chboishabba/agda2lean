@@ -20,7 +20,7 @@ import Agda2Lean.Platform
 import Control.Monad.Reader
 import Control.Monad.State.Strict
 import Data.Char (isAlpha, isAlphaNum)
-import Data.List (sortOn)
+import Data.List (find, sortOn)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
@@ -40,7 +40,7 @@ defaultEmitOptions :: EmitOptions
 defaultEmitOptions =
   EmitOptions
     { emitNamespace = True
-    , emitSorryBodies = True
+    , emitSorryBodies = False
     , emitRegistry = platformMappings
     }
 
@@ -63,6 +63,7 @@ data BuiltinReceipt = BuiltinReceipt
   , builtinReceiptRule :: Maybe Text
   , builtinReceiptLeanTarget :: Maybe Text
   , builtinReceiptComputation :: Maybe ComputationTreatment
+  , builtinReceiptArgumentPolicy :: Maybe ArgumentPolicy
   , builtinReceiptAxiomDelta :: Vector.Vector Text
   , builtinReceiptStatus :: Text
   }
@@ -78,6 +79,8 @@ data LeanOutput = LeanOutput
 data RenderEnv = RenderEnv
   { renderTerms :: Map TermId CoreTerm
   , renderBinders :: Map BinderId Text
+  , renderRegistry :: Map BuiltinId PlatformMapping
+  , renderNameOverrides :: Map CanonicalName Text
   }
 
 type RenderM = ReaderT RenderEnv (State (Set TermId))
@@ -150,7 +153,7 @@ emitDeclaration options moduleIR declaration =
   case declarationBuiltin declaration of
     Just builtin -> emitBuiltinDeclaration builtin declaration
     Nothing ->
-      case renderRoot moduleIR (declarationType declaration) of
+      case renderRoot options moduleIR (declarationType declaration) of
         Left message ->
           ( metadata
               <> [ "-- BLOCKED: the Agda statement could not be represented faithfully."
@@ -212,6 +215,18 @@ emitDeclaration options moduleIR declaration =
         BuiltinBool -> native receipt "abbrev" "_root_.Bool"
         BuiltinBoolTrue -> native receipt "def" "_root_.Bool.true"
         BuiltinBoolFalse -> native receipt "def" "_root_.Bool.false"
+        BuiltinList ->
+          nativeLines receipt
+            [ "abbrev " <> builtinLocalName <> ".{u} (α : Type u) := _root_.List α" ]
+        BuiltinListNil ->
+          nativeLines receipt
+            [ "def " <> builtinLocalName <> ".{u} {α : Type u} : List α := _root_.List.nil" ]
+        BuiltinListCons ->
+          nativeLines receipt
+            [ "def "
+                <> builtinLocalName
+                <> ".{u} {α : Type u} (x : α) (xs : List α) : List α := _root_.List.cons x xs"
+            ]
         BuiltinLevel -> native receipt "abbrev" "Type"
         _ ->
           ( metadata
@@ -223,6 +238,12 @@ emitDeclaration options moduleIR declaration =
                  , [receipt {builtinReceiptStatus = "blocked"}]
           )
       where
+        builtinLocalName =
+          localLeanName (moduleName moduleIR) (declarationName currentDeclaration)
+
+        nativeLines nativeReceipt lines' =
+          (lines' <> [""], [], [nativeReceipt])
+
         native nativeReceipt keyword target =
           ( [ keyword
                 <> " "
@@ -246,6 +267,7 @@ emitDeclaration options moduleIR declaration =
             , builtinReceiptRule = Nothing
             , builtinReceiptLeanTarget = Nothing
             , builtinReceiptComputation = Nothing
+            , builtinReceiptArgumentPolicy = Nothing
             , builtinReceiptAxiomDelta = Vector.empty
             , builtinReceiptStatus = "unregistered"
             }
@@ -258,6 +280,7 @@ emitDeclaration options moduleIR declaration =
             , builtinReceiptRule = Just (platformMode mapping)
             , builtinReceiptLeanTarget = Just (platformTarget mapping)
             , builtinReceiptComputation = Just (platformComputation mapping)
+            , builtinReceiptArgumentPolicy = Just (platformArgumentPolicy mapping)
             , builtinReceiptAxiomDelta = Vector.fromList (platformAxiomDelta mapping)
             , builtinReceiptStatus = "mapped"
             }
@@ -267,67 +290,162 @@ emitDeclaration options moduleIR declaration =
             if declarationName declaration == CanonicalName "Agda.Primitive.Level"
               then "Type (0 + 1)"
               else renderedType
-       in case declarationRole declaration of
-            AxiomDeclaration ->
-              (["axiom " <> name <> " : " <> renderedType'], [])
-            LogicalProposition ->
-              emitValue "def" renderedType'
-            Theorem ->
-              emitTheorem renderedType'
-            Certificate ->
-              emitTheorem renderedType'
-            _ ->
-              emitValue
-                (if declarationBody declaration == Nothing then "opaque" else "def")
-                renderedType'
+       in emitDefinition renderedType' (declarationDefinition declaration)
 
-    emitTheorem renderedType =
-      case exactBody of
-        Right body ->
-          (["theorem " <> name <> " : " <> renderedType <> " := " <> body], [])
-        Left reason
-          | emitSorryBodies options ->
-              ( [ "theorem " <> name <> " : " <> renderedType <> " := by"
-                , "  -- agda2lean reconstruction boundary: " <> reason
-                , "  sorry"
-                ]
-              , [diagnostic Warning "A2L-W-RECONSTRUCT" reason]
-              )
+    emitDefinition renderedType definition =
+      case definition of
+        TermDefinition body ->
+          emitTermDefinition renderedType body
+        ClauseDefinition clauses ->
+          emitClauseDefinition renderedType clauses
+        RecordDefinition schema ->
+          emitRecordDefinition renderedType schema
+        DataDefinition schema ->
+          emitDataDefinition renderedType schema
+        ConstructorDefinition schema ->
+          ( [ "-- Constructor is emitted by "
+                <> unCanonicalName (constructorOwner schema)
+                <> "."
+            ]
+          , []
+          )
+        ProjectionDefinition schema ->
+          ( [ "-- Projection is emitted as field "
+                <> unCanonicalName (projectionField schema)
+                <> " of "
+                <> unCanonicalName (projectionRecord schema)
+                <> "."
+            ]
+          , []
+          )
+        AxiomDefinition
+          | declarationRole declaration == AxiomDeclaration ->
+              (["axiom " <> name <> " : " <> renderedType], [])
           | otherwise ->
-              ( [ "-- BLOCKED theorem " <> name <> " : " <> renderedType
-                , "-- " <> reason
-                ]
-              , [diagnostic Error "A2L-E-BODY" reason]
-              )
+              hardBlocked "non-axiom declaration has no portable definition"
+        BlockedDefinition obligation ->
+          hardBlocked (renderDefinitionObligation obligation)
 
-    emitValue keyword renderedType =
-      case exactBody of
-        Right body ->
-          ([keyword <> " " <> name <> " : " <> renderedType <> " := " <> body], [])
-        Left reason ->
-          (["axiom " <> name <> " : " <> renderedType],
-           [diagnostic Warning "A2L-W-AXIOM" reason])
-
-    exactBody
+    emitTermDefinition renderedType body
       | declarationMapping declaration > Encoded =
-          Left
+          blocked renderedType
             ( "mapping mode "
                 <> Text.pack (show (declarationMapping declaration))
                 <> " requires native Lean reconstruction"
             )
       | otherwise =
-          case declarationBody declaration of
-            Nothing -> Left "Agda did not expose a portable body"
-            Just body -> renderRoot moduleIR body
+          case renderRoot options moduleIR body of
+            Left reason -> blocked renderedType reason
+            Right renderedBody ->
+              let loweredBody =
+                    case Map.lookup body (moduleTerms moduleIR) of
+                      -- Agda constructor spines omit datatype parameters, so
+                      -- an ordinary `refl` proof reaches the IR as the bare
+                      -- semantic constructor.  Lean's bare `Eq.refl` is still
+                      -- polymorphic; `by rfl` uses the expected theorem type.
+                      Just (Builtin BuiltinRefl) -> "by rfl"
+                      _ -> renderedBody
+               in
+              ( [ declarationKeyword
+                    <> " "
+                    <> name
+                    <> " : "
+                    <> renderedType
+                    <> " := "
+                    <> loweredBody
+                ]
+              , []
+              )
 
-renderRoot :: ModuleIR -> TermId -> Either Text Text
-renderRoot moduleIR root =
+    emitClauseDefinition renderedType clauses
+      | declarationMapping declaration > Encoded =
+          blocked renderedType "clause definition requires native Lean reconstruction"
+      | Vector.null clauses = hardBlocked "clause definition has no clauses"
+      | otherwise =
+          case traverse (renderClause options moduleIR) (Vector.toList clauses) of
+            Left reason -> blocked renderedType reason
+            Right renderedClauses ->
+              ( (declarationKeyword <> " " <> name <> " : " <> renderedType)
+                  : map ("  " <>) renderedClauses
+              , []
+              )
+
+    emitRecordDefinition _renderedType schema =
+      case renderRecordSchema options moduleIR name schema of
+        Left reason -> blocked _renderedType reason
+        Right lines' -> (lines', [])
+
+    emitDataDefinition renderedType schema =
+      case traverse renderConstructor (Vector.toList (dataConstructors schema)) of
+        Left reason -> hardBlocked reason
+        Right constructors ->
+          ( ("inductive " <> name <> " : " <> renderedType <> " where")
+              : map ("  " <>) constructors
+          , []
+          )
+      where
+        renderConstructor constructorName = do
+          constructorDeclaration <-
+            maybe
+              (Left ("missing constructor declaration: " <> unCanonicalName constructorName))
+              Right
+              ( find
+                  ((== constructorName) . declarationName)
+                  (Vector.toList (moduleDeclarations moduleIR))
+              )
+          case declarationDefinition constructorDeclaration of
+            ConstructorDefinition marker
+              | constructorOwner marker == declarationName declaration -> do
+                  constructorType <-
+                    renderRoot options moduleIR (declarationType constructorDeclaration)
+                  Right
+                    ( "| "
+                        <> leanNamePart (lastNamePart constructorName)
+                        <> " : "
+                        <> constructorType
+                    )
+              | otherwise ->
+                  Left ("constructor owner mismatch: " <> unCanonicalName constructorName)
+            _ -> Left ("declaration is not marked as a constructor: " <> unCanonicalName constructorName)
+
+    declarationKeyword
+      | isPropositionType moduleIR (declarationType declaration) = "theorem"
+      | declarationRole declaration `elem` [Theorem, Certificate] = "theorem"
+      | otherwise = "def"
+
+    blocked renderedType reason
+      | emitSorryBodies options =
+          ( [ declarationKeyword <> " " <> name <> " : " <> renderedType <> " := by"
+            , "  -- Explicit legacy reconstruction boundary: " <> reason
+            , "  sorry"
+            ]
+          , [diagnostic Warning "A2L-W-RECONSTRUCT" reason]
+          )
+      | otherwise = hardBlocked reason
+
+    hardBlocked reason =
+      ( [ "-- BLOCKED " <> name
+        , "-- " <> reason
+        ]
+      , [diagnostic Error "A2L-E-BODY" reason]
+      )
+
+renderDefinitionObligation :: DefinitionObligation -> Text
+renderDefinitionObligation = \case
+  UnsupportedDependentPattern reason -> "unsupported dependent pattern: " <> reason
+  UnsupportedClauseBody reason -> "unsupported clause body: " <> reason
+  UnsupportedDefinitionKind reason -> "unsupported definition kind: " <> reason
+
+renderRoot :: EmitOptions -> ModuleIR -> TermId -> Either Text Text
+renderRoot options moduleIR root =
   evalState
     ( runReaderT
         (renderTerm root)
         RenderEnv
           { renderTerms = moduleTerms moduleIR
           , renderBinders = Map.empty
+          , renderRegistry = emitRegistry options
+          , renderNameOverrides = moduleNameOverrides moduleIR
           }
     )
     Set.empty
@@ -358,6 +476,7 @@ renderCoreTerm = \case
           (Map.lookup binderId binders)
       )
   Sort universe -> pure (Right (renderUniverse universe))
+  Level level -> renderLevelExpr level
   Pi binder body -> renderBinderTerm "→" binder body
   Sigma binder body -> do
     renderedType <- renderTerm (binderType binder)
@@ -387,22 +506,18 @@ renderCoreTerm = \case
             <> body'
             <> ")"
         )
-  App function argument -> do
-    renderedFunction <- renderTerm function
-    renderedArgument <- renderTerm (argumentTerm argument)
-    pure $ do
-      function' <- renderedFunction
-      argument' <- renderedArgument
-      Right ("(" <> function' <> " " <> argument' <> ")")
+  App function argument -> renderApplication function argument
   Constructor name arguments ->
     renderNamedApplication name arguments
   Eliminator name arguments -> do
     rendered <- mapM (renderTerm . argumentTerm) (Vector.toList arguments)
+    overrides <- asks renderNameOverrides
+    let target = Map.findWithDefault (leanQualifiedName name) name overrides
     pure $ do
       values <- sequence rendered
       case values of
-        [receiver] -> Right ("(" <> receiver <> ")." <> leanNamePart (lastNamePart name))
-        _ -> Right (parenthesizedApplication (leanQualifiedName name) values)
+        [receiver] -> Right ("(" <> target <> " " <> receiver <> ")")
+        _ -> Right (parenthesizedApplication target values)
   Equality _ left right -> do
     renderedLeft <- renderTerm left
     renderedRight <- renderTerm right
@@ -410,14 +525,17 @@ renderCoreTerm = \case
       left' <- renderedLeft
       right' <- renderedRight
       Right ("(" <> left' <> " = " <> right' <> ")")
-  Axiom name -> pure (Right (renderConstant name))
+  Axiom name -> do
+    overrides <- asks renderNameOverrides
+    pure (Right (Map.findWithDefault (renderConstant name) name overrides))
   Builtin builtin ->
-    pure
-      ( maybe
-          (Left ("unregistered builtin: " <> Text.pack (show builtin)))
-          (Right . platformTarget)
-          (lookupPlatformMapping builtin)
-      )
+    asks renderRegistry >>= \registry ->
+      pure
+        ( maybe
+            (Left ("unregistered builtin: " <> Text.pack (show builtin)))
+            (Right . platformTarget)
+            (Map.lookup builtin registry)
+        )
   Extension extension ->
     pure
       ( Left
@@ -440,7 +558,73 @@ renderNamedApplication ::
   RenderM (Either Text Text)
 renderNamedApplication name arguments = do
   rendered <- mapM (renderTerm . argumentTerm) (Vector.toList arguments)
-  pure $ parenthesizedApplication (leanQualifiedName name) <$> sequence rendered
+  overrides <- asks renderNameOverrides
+  let target = Map.findWithDefault (leanQualifiedName name) name overrides
+  pure $ renderApplicationText target (Vector.toList arguments) <$> sequence rendered
+
+renderApplication :: TermId -> Argument -> RenderM (Either Text Text)
+renderApplication function finalArgument = do
+  table <- asks renderTerms
+  let (headId, arguments) = collectApplicationSpine table function [finalArgument]
+  case Map.lookup headId table of
+    Just (Builtin builtin) -> do
+      registry <- asks renderRegistry
+      case Map.lookup builtin registry of
+        Nothing -> pure (Left ("unregistered builtin: " <> Text.pack (show builtin)))
+        Just mapping -> renderProjectedApplication mapping arguments
+    _ -> do
+      renderedHead <- renderTerm headId
+      renderedArguments <- mapM (renderTerm . argumentTerm) arguments
+      pure $ do
+        head' <- renderedHead
+        arguments' <- sequence renderedArguments
+        Right (renderApplicationText head' arguments arguments')
+
+collectApplicationSpine :: Map TermId CoreTerm -> TermId -> [Argument] -> (TermId, [Argument])
+collectApplicationSpine table current arguments =
+  case Map.lookup current table of
+    Just (App function argument) ->
+      collectApplicationSpine table function (argument : arguments)
+    _ -> (current, arguments)
+
+renderProjectedApplication :: PlatformMapping -> [Argument] -> RenderM (Either Text Text)
+renderProjectedApplication mapping sourceArguments =
+  case projectArguments (platformArgumentPolicy mapping) sourceArguments of
+    Left reason -> pure (Left reason)
+    Right targetArguments -> do
+      rendered <- mapM (renderTerm . argumentTerm) targetArguments
+      pure $ do
+        values <- sequence rendered
+        Right (renderApplicationText (platformTarget mapping) targetArguments values)
+
+projectArguments :: ArgumentPolicy -> [Argument] -> Either Text [Argument]
+projectArguments PreserveArguments arguments = Right arguments
+projectArguments (ProjectArguments sourceArity order) arguments
+  | length arguments < required =
+      Left
+        ( "builtin application is under-applied: policy requires "
+            <> Text.pack (show required)
+            <> " source arguments, found "
+            <> Text.pack (show (length arguments))
+        )
+  | otherwise =
+      Right
+        ( map (prefix !!) (map fromIntegral (Vector.toList order))
+            <> suffix
+        )
+  where
+    required = fromIntegral sourceArity
+    (prefix, suffix) = splitAt required arguments
+
+renderApplicationText :: Text -> [Argument] -> [Text] -> Text
+renderApplicationText function arguments values =
+  case values of
+    [] -> function
+    _
+      | any ((/= Explicit) . argumentVisibility) arguments ->
+          "(@" <> function <> " " <> Text.intercalate " " values <> ")"
+      | otherwise ->
+          "(" <> function <> " " <> Text.intercalate " " values <> ")"
 
 bindRenderedBinder :: Binder -> RenderEnv -> RenderEnv
 bindRenderedBinder binder environment =
@@ -492,6 +676,174 @@ renderMaxLevel universes =
     [] -> "0"
     level : levels -> foldl (\left right -> "(max " <> left <> " " <> right <> ")") level levels
 
+renderLevelExpr :: LevelExpr -> RenderM (Either Text Text)
+renderLevelExpr = \case
+  LevelZero -> pure (Right "0")
+  LevelSuccessor level ->
+    fmap (fmap (\rendered -> "(" <> rendered <> " + 1)")) (renderLevelExpr level)
+  LevelMaximum levels -> do
+    rendered <- traverse renderLevelExpr (Vector.toList levels)
+    pure $ do
+      values <- sequence rendered
+      Right
+        (case values of
+           [] -> "0"
+           level : rest ->
+             foldl (\left right -> "(max " <> left <> " " <> right <> ")") level rest
+        )
+  LevelVariable binder -> do
+    binders <- asks renderBinders
+    pure
+      ( maybe
+          (Left ("unbound level binder " <> Text.pack (show binder)))
+          Right
+          (Map.lookup binder binders)
+      )
+
+renderClause :: EmitOptions -> ModuleIR -> CoreClause -> Either Text Text
+renderClause options moduleIR clause =
+  runRender options moduleIR $ bindClauseTelescope (Vector.toList (clauseTelescope clause))
+  where
+    bindClauseTelescope [] = do
+      renderedPatterns <- traverse renderCorePattern (Vector.toList (clausePatterns clause))
+      renderedBody <- renderTerm (clauseBody clause)
+      pure $ do
+        patterns <- sequence renderedPatterns
+        body <- renderedBody
+        Right
+          ( "| "
+              <> (if null patterns then "_" else Text.unwords patterns)
+              <> " => "
+              <> body
+          )
+    bindClauseTelescope (binder : rest) =
+      local (bindRenderedBinder binder) (bindClauseTelescope rest)
+
+renderCorePattern :: CorePattern -> RenderM (Either Text Text)
+renderCorePattern = \case
+  PatternVariable binder -> do
+    binders <- asks renderBinders
+    pure
+      ( maybe
+          (Left ("unbound pattern binder " <> Text.pack (show binder)))
+          Right
+          (Map.lookup binder binders)
+      )
+  PatternConstructor name patterns -> do
+    rendered <- traverse renderCorePattern (Vector.toList patterns)
+    overrides <- asks renderNameOverrides
+    pure $ do
+      values <- sequence rendered
+      Right (renderPatternApplication (Map.findWithDefault (leanQualifiedName name) name overrides) values)
+  PatternBuiltin builtin patterns -> do
+    rendered <- traverse renderCorePattern (Vector.toList patterns)
+    registry <- asks renderRegistry
+    pure $ do
+      mapping <-
+        maybe
+          (Left ("unregistered builtin pattern: " <> Text.pack (show builtin)))
+          Right
+          (Map.lookup builtin registry)
+      values <- sequence rendered
+      Right (renderPatternApplication (platformTarget mapping) values)
+  PatternLiteral kind value -> pure (Right (renderLiteral kind value))
+  PatternWildcard -> pure (Right "_")
+
+renderPatternApplication :: Text -> [Text] -> Text
+renderPatternApplication constructor patterns =
+  case patterns of
+    [] -> constructor
+    _ -> "(" <> constructor <> " " <> Text.unwords patterns <> ")"
+
+renderRecordSchema :: EmitOptions -> ModuleIR -> Text -> RecordSchema -> Either Text [Text]
+renderRecordSchema options moduleIR recordName schema =
+  runRender options moduleIR (renderParameters [] (Vector.toList (recordParameters schema)))
+  where
+    renderParameters rendered [] = do
+      renderFields rendered [] (Vector.toList (recordFields schema))
+    renderParameters rendered (binder : rest) = do
+      renderedType <- renderTerm (binderType binder)
+      case renderedType of
+        Left reason -> pure (Left reason)
+        Right type' ->
+          local
+            (bindRenderedBinder binder)
+            (renderParameters (rendered <> [renderBinder binder type']) rest)
+    renderFields parameters fields [] =
+      pure
+        ( Right
+            ( ("structure " <> recordName <> renderParameterSuffix parameters <> " where")
+                : map ("  " <>) fields
+            )
+        )
+    renderFields parameters fields (field : rest) = do
+      let binder = recordFieldBinder field
+      renderedType <- renderTerm (binderType binder)
+      case renderedType of
+        Left reason -> pure (Left reason)
+        Right type' ->
+          local
+            (bindRenderedBinder binder)
+            ( renderFields
+                parameters
+                (fields <> [leanNamePart (lastNamePart (recordFieldName field)) <> " : " <> type'])
+                rest
+            )
+    renderParameterSuffix [] = ""
+    renderParameterSuffix parameters = " " <> Text.unwords parameters
+
+runRender :: EmitOptions -> ModuleIR -> RenderM (Either Text a) -> Either Text a
+runRender options moduleIR action =
+  evalState
+    ( runReaderT
+        action
+        RenderEnv
+          { renderTerms = moduleTerms moduleIR
+          , renderBinders = Map.empty
+          , renderRegistry = emitRegistry options
+          , renderNameOverrides = moduleNameOverrides moduleIR
+          }
+    )
+    Set.empty
+
+moduleNameOverrides :: ModuleIR -> Map CanonicalName Text
+moduleNameOverrides moduleIR =
+  -- A record constructor also has its own ConstructorDefinition declaration.
+  -- Keep the earlier RecordDefinition override to `.mk` instead of allowing
+  -- the later generic constructor rule to overwrite it with the Agda name.
+  Map.fromListWith
+    (\_new earlier -> earlier)
+    (concatMap declarationOverrides (Vector.toList (moduleDeclarations moduleIR)))
+  where
+    declarationOverrides declaration =
+      case declarationDefinition declaration of
+        RecordDefinition schema ->
+          [ ( recordConstructor schema
+            , leanQualifiedName (declarationName declaration) <> ".mk"
+            )
+          ]
+        ProjectionDefinition schema ->
+          [ (declarationName declaration, leanQualifiedName (projectionField schema)) ]
+        ConstructorDefinition schema ->
+          [ ( declarationName declaration
+            , leanQualifiedName (constructorOwner schema)
+                <> "."
+                <> leanNamePart (lastNamePart (declarationName declaration))
+            )
+          ]
+        _ -> []
+
+isPropositionType :: ModuleIR -> TermId -> Bool
+isPropositionType moduleIR = go Set.empty
+  where
+    go seen termId
+      | termId `Set.member` seen = False
+      | otherwise =
+          case Map.lookup termId (moduleTerms moduleIR) of
+            Just Equality {} -> True
+            Just (Pi _ body) -> go (Set.insert termId seen) body
+            _ -> False
+
 renderConstant :: CanonicalName -> Text
 renderConstant name =
   case Text.stripPrefix "agda2lean.literal." (unCanonicalName name) of
@@ -509,6 +861,19 @@ renderConstant name =
                 Nothing -> "''"
             _ -> leanQualifiedName name
     Nothing -> leanQualifiedName name
+
+renderLiteral :: Text -> Text -> Text
+renderLiteral kind value =
+  case kind of
+    "nat" -> value
+    "integer" -> value
+    "float" -> value
+    "string" -> Text.pack (show value)
+    "char" ->
+      case Text.uncons value of
+        Just (character, _) -> Text.pack (show character)
+        Nothing -> "''"
+    _ -> leanQualifiedName (CanonicalName ("agda2lean.literal." <> kind <> "." <> value))
 
 parenthesizedApplication :: Text -> [Text] -> Text
 parenthesizedApplication function arguments =
@@ -585,7 +950,7 @@ renderDiagnostics diagnostics =
 renderBuiltinReceipts :: Vector.Vector BuiltinReceipt -> Text
 renderBuiltinReceipts receipts =
   Text.unlines
-    ( "declaration\tagda-binding\tbuiltin-id\tregistry\trule\tlean-target\tcomputation\taxiom-delta\tstatus"
+    ( "declaration\tagda-binding\tbuiltin-id\tregistry\trule\tlean-target\tcomputation\targument-policy\taxiom-delta\tstatus"
         : map renderReceipt (Vector.toList receipts)
     )
   where
@@ -599,6 +964,7 @@ renderBuiltinReceipts receipts =
         , maybe "-" id (builtinReceiptRule receipt)
         , maybe "-" id (builtinReceiptLeanTarget receipt)
         , maybe "-" (Text.pack . show) (builtinReceiptComputation receipt)
+        , maybe "-" (Text.pack . show) (builtinReceiptArgumentPolicy receipt)
         , if Vector.null (builtinReceiptAxiomDelta receipt)
             then "-"
             else Text.intercalate "," (Vector.toList (builtinReceiptAxiomDelta receipt))

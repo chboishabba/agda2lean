@@ -15,6 +15,7 @@ import qualified Agda.Syntax.Literal as Agda
 import Agda.Syntax.Position
 import Agda.Syntax.TopLevelModuleName (TopLevelModuleName)
 import qualified Agda.TypeChecking.Monad.Base as Agda
+import qualified Agda.TypeChecking.Monad.Signature as AgdaSignature
 import qualified Agda.TypeChecking.Primitive as AgdaPrimitive
 import qualified Agda.Syntax.Builtin as AgdaBuiltin
 import qualified Agda.Utils.Maybe.Strict as Strict
@@ -153,6 +154,18 @@ compileDefinition ::
   TCM Snapshot.AgdaDeclaration
 compileDefinition _ ModuleEnvironment {..} _ definition =
   let extractedType = snapshotType (Agda.defType definition)
+      extractedDefinition
+        | Core.UnsafeUniverse `Set.member` termFeaturesSnapshot extractedType =
+            Snapshot.AgdaBlockedDefinition
+              "definition-kind"
+              ( Core.unCanonicalName (canonicalName (Agda.defName definition))
+                  <> ": declaration type contains an unsafe/unsolved universe term"
+              )
+        | otherwise =
+            snapshotDefinition
+              environmentBuiltins
+              (canonicalName (Agda.defName definition))
+              (Agda.theDef definition)
    in pure
     Snapshot.AgdaDeclaration
       { Snapshot.agdaDeclarationName = canonicalName (Agda.defName definition)
@@ -165,23 +178,303 @@ compileDefinition _ ModuleEnvironment {..} _ definition =
       -- this metadata empty avoids duplicating the telescope in the IR.
       , Snapshot.agdaDeclarationModuleParameters = Vector.empty
       , Snapshot.agdaDeclarationType = extractedType
-      -- Proof strategy is intentionally not copied. General Agda clauses are
-      -- reconstructed natively in Lean; their elaborated statement and direct
-      -- dependencies are still extracted exactly here.
-      , Snapshot.agdaDeclarationBody = Nothing
+      , Snapshot.agdaDeclarationDefinition = extractedDefinition
       , Snapshot.agdaDeclarationAdditionalDependencies =
           definitionBodyDependencies definition
       , Snapshot.agdaDeclarationFeatures = definitionFeatures definition
       , Snapshot.agdaDeclarationSource = sourceSpan (Agda.defName definition)
       }
 
+snapshotDefinition ::
+  Map.Map Core.CanonicalName Core.BuiltinId ->
+  Core.CanonicalName ->
+  Agda.Defn ->
+  Snapshot.AgdaDeclarationDefinition
+snapshotDefinition builtins owner = \case
+  Agda.Axiom {} -> Snapshot.AgdaAxiomDefinition
+  Agda.Datatype
+    { Agda.dataPars = parameterCount
+    , Agda.dataCons = constructors
+    , Agda.dataPathCons = pathConstructors
+    }
+      | null pathConstructors ->
+          Snapshot.AgdaDataDefinition
+            Snapshot.AgdaDataSchema
+              { Snapshot.agdaDataParameterCount = fromIntegral parameterCount
+              , Snapshot.agdaDataConstructors =
+                  Vector.fromList (map canonicalName constructors)
+              }
+      | otherwise ->
+          blocked
+            "dependent-pattern"
+            "higher-inductive path constructors are outside the portable fragment"
+  Agda.Record
+    { Agda.recPars = parameterCount
+    , Agda.recConHead = constructor
+    , Agda.recFields = fields
+    , Agda.recTel = telescope
+    , Agda.recInduction = induction
+    }
+      | induction == Just Agda.CoInductive ->
+          blocked
+            "definition-kind"
+            "coinductive records are outside the portable fragment"
+      | otherwise ->
+          let binders = snapshotTelescope telescope
+              (parameters, fieldBinders) = splitAt parameterCount binders
+              fieldNames = map (canonicalName . Agda.unDom) fields
+           in if length fieldNames /= length fieldBinders
+                then
+                  blocked
+                    "definition-kind"
+                    ( "record telescope/field mismatch: "
+                        <> Text.pack (show (length fieldBinders))
+                        <> " field binders for "
+                        <> Text.pack (show (length fieldNames))
+                        <> " names"
+                    )
+                else
+                  if any
+                    ( Set.member Core.UnsafeUniverse
+                        . termFeaturesSnapshot
+                        . Snapshot.agdaBinderType
+                    )
+                    binders
+                    then
+                      blocked
+                        "definition-kind"
+                        "record telescope contains an unsafe/unsolved universe term"
+                    else
+                      Snapshot.AgdaRecordDefinition
+                        Snapshot.AgdaRecordSchema
+                          { Snapshot.agdaRecordParameters = Vector.fromList parameters
+                          , Snapshot.agdaRecordConstructor =
+                              canonicalName (Agda.conName constructor)
+                          , Snapshot.agdaRecordFields =
+                              Vector.fromList
+                                ( zipWith
+                                    (\name binder ->
+                                       Snapshot.AgdaRecordField
+                                         { Snapshot.agdaRecordFieldName = name
+                                         , Snapshot.agdaRecordFieldType =
+                                             Snapshot.agdaBinderType binder
+                                         }
+                                    )
+                                    fieldNames
+                                    fieldBinders
+                                )
+                          }
+  Agda.Constructor {Agda.conData = datatype} ->
+    Snapshot.AgdaConstructorDefinition
+      Snapshot.AgdaConstructorSchema
+        { Snapshot.agdaConstructorOwner = canonicalName datatype
+        }
+  Agda.Function {Agda.funProjection = Right projection}
+    | Just record <- Agda.projProper projection ->
+        Snapshot.AgdaProjectionDefinition
+          Snapshot.AgdaProjectionSchema
+            { Snapshot.agdaProjectionRecord = canonicalName record
+            , Snapshot.agdaProjectionField = owner
+            , Snapshot.agdaProjectionIndex =
+                fromIntegral (max 0 (Agda.projIndex projection))
+            }
+  Agda.Function {Agda.funClauses = clauses} ->
+    snapshotClauses builtins owner clauses
+  Agda.Primitive {Agda.primClauses = clauses}
+    | not (null clauses) -> snapshotClauses builtins owner clauses
+    | otherwise ->
+        blocked
+          "definition-kind"
+          "opaque Agda primitive has no portable clause body"
+  Agda.PrimitiveSort {} ->
+    blocked
+      "definition-kind"
+      "Agda primitive sorts require a platform mapping"
+  Agda.AbstractDefn inner -> snapshotDefinition builtins owner inner
+  other ->
+    blocked
+      "definition-kind"
+      ("unsupported Agda definition: " <> Text.pack (prettyShow other))
+  where
+    blocked code detail = Snapshot.AgdaBlockedDefinition code detail
+
+snapshotClauses ::
+  Map.Map Core.CanonicalName Core.BuiltinId ->
+  Core.CanonicalName ->
+  [Agda.Clause] ->
+  Snapshot.AgdaDeclarationDefinition
+snapshotClauses builtins owner clauses =
+  case traverse (snapshotClause builtins owner) clauses of
+    Left (code, detail) -> Snapshot.AgdaBlockedDefinition code detail
+    Right [] ->
+      Snapshot.AgdaBlockedDefinition
+        "clause-body"
+        (Core.unCanonicalName owner <> ": definition has no executable clauses")
+    Right portable
+      | any clauseHasUnsafeUniverse portable ->
+          Snapshot.AgdaBlockedDefinition
+            "clause-body"
+            ( Core.unCanonicalName owner
+                <> ": clause body contains an unsolved/internal universe term"
+            )
+    Right [clause]
+      | Vector.null (Snapshot.agdaClauseTelescope clause)
+      , Vector.null (Snapshot.agdaClausePatterns clause) ->
+          Snapshot.AgdaTermDefinition (Snapshot.agdaClauseBody clause)
+    Right portable ->
+      Snapshot.AgdaClauseDefinition (Vector.fromList portable)
+  where
+    clauseHasUnsafeUniverse clause =
+      Core.UnsafeUniverse
+        `Set.member` ( termFeaturesSnapshot (Snapshot.agdaClauseBody clause)
+                        <> foldMap
+                          (termFeaturesSnapshot . Snapshot.agdaBinderType)
+                          (Snapshot.agdaClauseTelescope clause)
+                    )
+
+termFeaturesSnapshot :: Snapshot.AgdaTerm -> Set.Set Core.Feature
+termFeaturesSnapshot = \case
+  Snapshot.AgdaVar _ eliminations -> foldMap eliminationFeaturesSnapshot eliminations
+  Snapshot.AgdaLam binder body ->
+    termFeaturesSnapshot (Snapshot.agdaBinderType binder) <> termFeaturesSnapshot body
+  Snapshot.AgdaDef _ eliminations -> foldMap eliminationFeaturesSnapshot eliminations
+  Snapshot.AgdaCon _ eliminations -> foldMap eliminationFeaturesSnapshot eliminations
+  Snapshot.AgdaPi binder body ->
+    termFeaturesSnapshot (Snapshot.agdaBinderType binder) <> termFeaturesSnapshot body
+  Snapshot.AgdaSigma binder body ->
+    termFeaturesSnapshot (Snapshot.agdaBinderType binder) <> termFeaturesSnapshot body
+  Snapshot.AgdaSort _ -> Set.empty
+  Snapshot.AgdaLevel _ -> Set.empty
+  Snapshot.AgdaEquality type' left right ->
+    Set.insert
+      Core.OrdinaryEquality
+      (termFeaturesSnapshot type' <> termFeaturesSnapshot left <> termFeaturesSnapshot right)
+  Snapshot.AgdaLiteral _ _ -> Set.empty
+  Snapshot.AgdaUnsupported feature _ arguments ->
+    Set.insert feature (foldMap termFeaturesSnapshot arguments)
+
+eliminationFeaturesSnapshot :: Snapshot.AgdaElimination -> Set.Set Core.Feature
+eliminationFeaturesSnapshot = \case
+  Snapshot.AgdaApply _ _ term -> termFeaturesSnapshot term
+  Snapshot.AgdaProject _ -> Set.empty
+  Snapshot.AgdaIntervalApply left right interval ->
+    Set.insert
+      Core.Cubical
+      ( termFeaturesSnapshot left
+          <> termFeaturesSnapshot right
+          <> termFeaturesSnapshot interval
+      )
+
+snapshotClause ::
+  Map.Map Core.CanonicalName Core.BuiltinId ->
+  Core.CanonicalName ->
+  Agda.Clause ->
+  Either (Text.Text, Text.Text) Snapshot.AgdaClause
+snapshotClause builtins owner clause = do
+  body <-
+    maybe
+      ( Left
+          ( "clause-body"
+          , Core.unCanonicalName owner <> ": absurd clauses are not yet portable"
+          )
+      )
+      (Right . snapshotTerm)
+      (Agda.clauseBody clause)
+  patterns <-
+    traverse
+      (snapshotPattern builtins . Agda.namedArg)
+      (filter explicitNamedArgument (Agda.namedClausePats clause))
+  pure
+    Snapshot.AgdaClause
+      { Snapshot.agdaClauseTelescope =
+          Vector.fromList (snapshotTelescope (Agda.clauseTel clause))
+      , Snapshot.agdaClausePatterns = Vector.fromList patterns
+      , Snapshot.agdaClauseBody = body
+      }
+
+snapshotPattern ::
+  Map.Map Core.CanonicalName Core.BuiltinId ->
+  Agda.DeBruijnPattern ->
+  Either (Text.Text, Text.Text) Snapshot.AgdaPattern
+snapshotPattern builtins = \case
+  Agda.VarP info variable
+    | Agda.patOrigin info == Agda.PatOWild ->
+        Right Snapshot.AgdaPatternWildcard
+    | Agda.patOrigin info == Agda.PatOAbsurd ->
+        Left ("dependent-pattern", "absurd patterns require motive reconstruction")
+    | otherwise ->
+        Right (Snapshot.AgdaPatternVariable (Agda.dbPatVarIndex variable))
+  Agda.ConP constructor _ arguments -> do
+    children <-
+      traverse
+        (snapshotPattern builtins . Agda.namedArg)
+        (filter explicitNamedArgument arguments)
+    let name = canonicalName (Agda.conName constructor)
+    pure
+      ( case Map.lookup name builtins of
+          Just builtin -> Snapshot.AgdaPatternBuiltin builtin (Vector.fromList children)
+          Nothing -> Snapshot.AgdaPatternConstructor name (Vector.fromList children)
+      )
+  Agda.LitP _ literal -> do
+    (kind, value) <- snapshotPatternLiteral literal
+    Right (Snapshot.AgdaPatternLiteral kind value)
+  Agda.DotP {} ->
+    Left ("dependent-pattern", "dot/forced patterns require motive reconstruction")
+  Agda.ProjP {} ->
+    Left ("dependent-pattern", "projection copatterns are outside the portable fragment")
+  Agda.IApplyP {} ->
+    Left ("dependent-pattern", "cubical interval patterns are outside the portable fragment")
+  Agda.DefP {} ->
+    Left ("dependent-pattern", "higher-inductive definition patterns are outside the portable fragment")
+
+explicitNamedArgument :: Agda.NamedArg a -> Bool
+explicitNamedArgument argument =
+  Agda.getHiding (Agda.getArgInfo argument) == Agda.NotHidden
+
+snapshotTelescope :: Agda.Telescope -> [Snapshot.AgdaBinder]
+snapshotTelescope = \case
+  Agda.EmptyTel -> []
+  Agda.ExtendTel domain abstraction ->
+    snapshotDomain domain (Agda.absName abstraction)
+      : snapshotTelescope (Agda.unAbs abstraction)
+
+snapshotPatternLiteral ::
+  Agda.Literal ->
+  Either (Text.Text, Text.Text) (Text.Text, Text.Text)
+snapshotPatternLiteral = \case
+  Agda.LitNat value -> Right ("nat", Text.pack (show value))
+  Agda.LitWord64 value -> Right ("nat", Text.pack (show value))
+  Agda.LitString value -> Right ("string", value)
+  Agda.LitChar value -> Right ("char", Text.singleton value)
+  Agda.LitFloat _ ->
+    Left ("dependent-pattern", "floating-point literal patterns are not portable to Lean")
+  Agda.LitQName _ ->
+    Left ("dependent-pattern", "quoted-name literal patterns require reflection support")
+  Agda.LitMeta _ _ ->
+    Left ("dependent-pattern", "metavariable literal patterns are not portable")
+
 activeBuiltinBindings :: TCM (Map.Map Core.CanonicalName Core.BuiltinId)
-activeBuiltinBindings =
-  Map.fromList . mapMaybe id <$> mapM resolve builtinPairs
+activeBuiltinBindings = do
+  direct <- mapMaybe id <$> mapM resolve builtinPairs
+  constructors <- concat <$> mapM resolveFamily builtinFamilies
+  pure (Map.fromList (direct <> constructors))
   where
     resolve (builtin, target) = do
       name <- AgdaPrimitive.getBuiltinName builtin
       pure ((\resolved -> (canonicalName resolved, target)) <$> name)
+
+    resolveFamily (builtin, targets) = do
+      name <- AgdaPrimitive.getBuiltinName builtin
+      case name of
+        Nothing -> pure []
+        Just resolved -> do
+          definition <- AgdaSignature.getConstInfo resolved
+          pure
+            ( case Agda.theDef definition of
+                Agda.Datatype {Agda.dataCons = constructors} ->
+                  zip (map canonicalName constructors) targets
+                _ -> []
+            )
 
     builtinPairs =
       [ (AgdaBuiltin.builtinNat, Core.BuiltinNat)
@@ -195,6 +488,9 @@ activeBuiltinBindings =
       , (AgdaBuiltin.builtinBool, Core.BuiltinBool)
       , (AgdaBuiltin.builtinTrue, Core.BuiltinBoolTrue)
       , (AgdaBuiltin.builtinFalse, Core.BuiltinBoolFalse)
+      , (AgdaBuiltin.builtinList, Core.BuiltinList)
+      , (AgdaBuiltin.builtinNil, Core.BuiltinListNil)
+      , (AgdaBuiltin.builtinCons, Core.BuiltinListCons)
       , (AgdaBuiltin.builtinEquality, Core.BuiltinEquality)
       , (AgdaBuiltin.builtinRefl, Core.BuiltinRefl)
       , (AgdaBuiltin.builtinLevel, Core.BuiltinLevel)
@@ -203,6 +499,17 @@ activeBuiltinBindings =
       , (AgdaBuiltin.builtinLevelMax, Core.BuiltinLevelMax)
       , (AgdaBuiltin.builtinProp, Core.BuiltinProp)
       , (AgdaBuiltin.builtinSet, Core.BuiltinSet)
+      ]
+
+    -- Agda 2.9 derives several constructor identities from the builtin
+    -- datatype rather than exposing a standalone pragma binding for each one.
+    -- Complete those families from the elaborated datatype schema and its
+    -- kernel constructor order.
+    builtinFamilies =
+      [ (AgdaBuiltin.builtinNat, [Core.BuiltinNatZero, Core.BuiltinNatSuc])
+      , (AgdaBuiltin.builtinBool, [Core.BuiltinBoolFalse, Core.BuiltinBoolTrue])
+      , (AgdaBuiltin.builtinList, [Core.BuiltinListNil, Core.BuiltinListCons])
+      , (AgdaBuiltin.builtinEquality, [Core.BuiltinRefl])
       ]
 
 snapshotType :: Agda.Type -> Snapshot.AgdaTerm
@@ -240,11 +547,7 @@ snapshotTerm = \case
       (snapshotDomain domain (Agda.absName codomain))
       (snapshotType (Agda.unAbs codomain))
   Agda.Sort sort' -> Snapshot.AgdaSort (snapshotSort sort')
-  Agda.Level level ->
-    Snapshot.AgdaUnsupported
-      Core.UnsafeUniverse
-      ("first-class Agda level: " <> Text.pack (prettyShow level))
-      Vector.empty
+  Agda.Level level -> snapshotFirstClassLevel level
   Agda.MetaV meta eliminations ->
     Snapshot.AgdaUnsupported
       Core.UnsafeUniverse
@@ -348,6 +651,45 @@ iterateSuccessor :: Integer -> Core.Universe -> Core.Universe
 iterateSuccessor count universe
   | count <= 0 = universe
   | otherwise = iterateSuccessor (count - 1) (Core.USuc universe)
+
+snapshotFirstClassLevel :: Agda.Level -> Snapshot.AgdaTerm
+snapshotFirstClassLevel level@(Agda.Max closed atoms) =
+  case traverse snapshotLevelAtom atoms of
+    Nothing ->
+      Snapshot.AgdaUnsupported
+        Core.UnsafeUniverse
+        ("non-variable first-class Agda level: " <> Text.pack (prettyShow level))
+        ( Vector.fromList
+            [ snapshotTerm atom
+            | Agda.Plus _ atom <- atoms
+            ]
+        )
+    Just variables ->
+      Snapshot.AgdaLevel
+        (maximumLevelExpr (iterateLevelSuccessor closed Snapshot.AgdaLevelZero : variables))
+  where
+    snapshotLevelAtom (Agda.Plus offset atom) =
+      case atom of
+        Agda.Var index [] ->
+          Just
+            ( iterateLevelSuccessor
+                offset
+                (Snapshot.AgdaLevelVariable index)
+            )
+        _ -> Nothing
+
+maximumLevelExpr :: [Snapshot.AgdaLevelExpr] -> Snapshot.AgdaLevelExpr
+maximumLevelExpr levels =
+  case filter (/= Snapshot.AgdaLevelZero) levels of
+    [] -> Snapshot.AgdaLevelZero
+    [level] -> level
+    several -> Snapshot.AgdaLevelMaximum (Vector.fromList several)
+
+iterateLevelSuccessor :: Integer -> Snapshot.AgdaLevelExpr -> Snapshot.AgdaLevelExpr
+iterateLevelSuccessor count level
+  | count <= 0 = level
+  | otherwise =
+      iterateLevelSuccessor (count - 1) (Snapshot.AgdaLevelSuccessor level)
 
 visibility :: Agda.ArgInfo -> Core.Visibility
 visibility info =
@@ -610,45 +952,286 @@ sourceSpan name =
               Strict.Nothing -> Text.pack (prettyShow name)
               Strict.Just rangeFile' ->
                 Text.pack (filePath (rangeFilePath rangeFile'))
-        , Core.sourceStartLine = fromIntegral (posLine (iStart interval))
-        , Core.sourceEndLine =
-            max
-              (fromIntegral (posLine (iStart interval)))
-              (fromIntegral (posLine (iEnd interval)))
-        }
+        , Core.sw÷}z¶‰žËkºwµço
+            let output =
+                  emitLeanModule
+                    defaultEmitOptions {emitSorryBodies = True}
+                    moduleIR
+            assertBool "reconstruction body lacks sorry" ("sorry" `Text.isInfixOf` leanSource output)
+            assertBool
+              "reconstruction diagnostic missing"
+              ( Vector.any
+                  ((== "A2L-W-RECONSTRUCT") . diagnosticCode)
+                  (leanDiagnostics output)
+              )
+    , testCase "can fail closed instead of emitting reconstruction sorries" $
+        case extractModule reconstructSnapshot of
+          Left issue -> assertFailure (show issue)
+          Right moduleIR -> do
+            let output = emitLeanModule defaultEmitOptions moduleIR
+            assertBool
+              "fail-closed diagnostic missing"
+              ( Vector.any
+                  ((== Error) . diagnosticSeverity)
+                  (leanDiagnostics output)
+              )
+    ]
 
-canonicalName :: Pretty a => a -> Core.CanonicalName
-canonicalName = Core.CanonicalName . Text.pack . prettyShow
+builtinNatModule :: ModuleIR
+builtinNatModule =
+  exampleModule
+    { moduleName = CanonicalName "Agda.Builtin.Nat"
+    , moduleImports =
+        Set.fromList
+          [ CanonicalName "Agda.Builtin.Bool"
+          , CanonicalName "Agda.Primitive"
+          ]
+    , moduleDeclarations = Vector.empty
+    , moduleTerms = Map.empty
+    }
 
-universeNames :: Snapshot.AgdaTerm -> Set.Set Text.Text
-universeNames = \case
-  Snapshot.AgdaVar _ eliminations -> foldMap eliminationUniverses eliminations
-  Snapshot.AgdaLam binder body ->
-    universeNames (Snapshot.agdaBinderType binder) <> universeNames body
-  Snapshot.AgdaDef _ eliminations -> foldMap eliminationUniverses eliminations
-  Snapshot.AgdaCon _ eliminations -> foldMap eliminationUniverses eliminations
-  Snapshot.AgdaPi binder body ->
-    universeNames (Snapshot.agdaBinderType binder) <> universeNames body
-  Snapshot.AgdaSigma binder body ->
-    universeNames (Snapshot.agdaBinderType binder) <> universeNames body
-  Snapshot.AgdaSort universe -> universeLevelNames universe
-  Snapshot.AgdaEquality type' left right ->
-    universeNames type' <> universeNames left <> universeNames right
-  Snapshot.AgdaLiteral _ _ -> Set.empty
-  Snapshot.AgdaUnsupported _ _ arguments -> foldMap universeNames arguments
+builtinEqualityModule :: ModuleIR
+builtinEqualityModule =
+  ModuleIR
+    { moduleSchemaVersion = currentSchemaVersion
+    , moduleName = CanonicalName "Agda.Builtin.Equality"
+    , moduleImports = Set.singleton (CanonicalName "Agda.Primitive")
+    , moduleTerms = Map.empty
+    , moduleDeclarations =
+        Vector.fromList
+          [ CoreDeclaration
+              { declarationName = CanonicalName "Agda.Builtin.Equality._â‰¡_"
+              , declarationBuiltin = Just BuiltinEquality
+              , declarationRole = AxiomDeclaration
+              , declarationUniverses = Vector.empty
+              , declarationModuleParameters = Vector.empty
+              , declarationType = TermId 0
+              , declarationDefinition = AxiomDefinition
+              , declarationDependencies = Set.empty
+              , declarationFeatures = Set.empty
+              , declarationSource = SourceSpan "Agda/Builtin/Equality.agda" 1 1
+              , declarationMapping = Exact
+              }
+          , CoreDeclaration
+              { declarationName = CanonicalName "Agda.Builtin.Equality._â‰¡_.refl"
+              , declarationBuiltin = Just BuiltinRefl
+              , declarationRole = Theorem
+              , declarationUniverses = Vector.empty
+              , declarationModuleParameters = Vector.empty
+              , declarationType = TermId 0
+              , declarationDefinition = AxiomDefinition
+              , declarationDependencies = Set.empty
+              , declarationFeatures = Set.empty
+              , declarationSource = SourceSpan "Agda/Builtin/Equality.agda" 2 2
+              , declarationMapping = Exact
+              }
+          ]
+    }
 
-eliminationUniverses :: Snapshot.AgdaElimination -> Set.Set Text.Text
-eliminationUniverses = \case
-  Snapshot.AgdaApply _ _ term -> universeNames term
-  Snapshot.AgdaProject _ -> Set.empty
-  Snapshot.AgdaIntervalApply left right interval ->
-    universeNames left <> universeNames right <> universeNames interval
+validationTests :: TestTree
+validationTests =
+  testGroup
+    "validation"
+    [ testCase "rejects a missing declaration type" $
+        case
+            validateModule
+              exampleModule
+                { moduleTerms =
+                    Map.delete (TermId 2) (moduleTerms exampleModule)
+                }
+          of
+            Left _ -> pure ()
+            Right _ -> assertFailure "missing declaration type was accepted"
+    , testCase "unsupported declarations cannot carry bodies" $
+        let declarations = moduleDeclarations exampleModule
+            declaration = Vector.head declarations
+            invalid =
+              exampleModule
+                { moduleDeclarations =
+                    Vector.singleton
+                      declaration {declarationMapping = Unsupported}
+                }
+         in case validateModule invalid of
+              Left _ -> pure ()
+              Right _ -> assertFailure "unsupported proof body was accepted"
+    , testCase "declarations must belong to their module namespace" $
+        let declaration = Vector.head (moduleDeclarations exampleModule)
+            invalid =
+              exampleModule
+                { moduleDeclarations =
+                    Vector.singleton
+                      declaration
+                        { declarationName = CanonicalName "Other.identity"
+                        }
+                }
+         in case validateModule invalid of
+              Left _ -> pure ()
+              Right _ -> assertFailure "cross-module declaration name was accepted"
+    ]
 
-universeLevelNames :: Core.Universe -> Set.Set Text.Text
-universeLevelNames = \case
-  Core.UZero -> Set.empty
-  Core.USuc universe -> universeLevelNames universe
-  Core.UMax universes -> foldMap universeLevelNames universes
-  Core.ULevel name -> Set.singleton name
-  Core.UProp universe -> universeLevelNames universe
-  Core.USSet universe -> universeLevelNames universe
+classificationTests :: TestTree
+classificationTests =
+  testGroup
+    "feature classification"
+    [ testCase "ordinary definitions remain exact" $
+        classificationMode
+          ( classifyDeclaration
+              exampleModule
+              (Vector.head (moduleDeclarations exampleModule))
+          )
+          @?= Exact
+    , testCase "Cubical terms are quarantined" $
+        let cubicalTermId = TermId 5
+            terms =
+              Map.insert
+                cubicalTermId
+                (Extension (CubicalPrimitive "comp" Vector.empty))
+                (moduleTerms exampleModule)
+            declaration =
+              (Vector.head (moduleDeclarations exampleModule))
+                { declarationType = cubicalTermId
+                , declarationDefinition = AxiomDefinition
+                }
+            cubicalModule =
+              exampleModule
+                { moduleTerms = terms
+                , moduleDeclarations = Vector.singleton declaration
+                }
+         in classificationMode
+              (classifyDeclaration cubicalModule declaration)
+              @?= Quarantined
+    , testCase "module parameter features cannot bypass classification" $
+        let cubicalTermId = TermId 5
+            terms =
+              Map.insert
+                cubicalTermId
+                (Extension (CubicalPrimitive "interval" Vector.empty))
+                (moduleTerms exampleModule)
+            declaration =
+              (Vector.head (moduleDeclarations exampleModule))
+                { declarationModuleParameters =
+                    Vector.singleton
+                      Binder
+                        { binderId = BinderId 99
+                        , binderName = "I"
+                        , binderType = cubicalTermId
+                        , binderVisibility = Implicit
+                        , binderRelevance = Relevant
+                        }
+                }
+            parameterModule =
+              exampleModule
+                { moduleTerms = terms
+                , moduleDeclarations = Vector.singleton declaration
+                }
+         in classificationMode
+              (classifyDeclaration parameterModule declaration)
+              @?= Quarantined
+    ]
+
+catalogTests :: TestTree
+catalogTests =
+  testGroup
+    "SQLite catalog"
+    [ testCase "deduplicates immutable module objects" $
+        withSystemTempDirectory "agda2lean-test" $ \directory -> do
+          let path = directory </> "catalog.sqlite"
+          catalog <- openCatalog path
+          firstHash <- storeModule catalog exampleModule
+          secondHash <- storeModule catalog exampleModule
+          stats <- readCatalogStats catalog
+          fetched <-
+            getModule catalog (CanonicalName "DASHI.Example.Identity")
+          closeCatalog catalog
+          firstHash @?= secondHash
+          statsModules stats @?= 1
+          statsObjects stats @?= 1
+          statsDeclarations stats @?= 1
+          fetched @?= Just exampleModule
+    , testCase "atomically replaces a module head and its indexes" $
+        withSystemTempDirectory "agda2lean-test" $ \directory -> do
+          let path = directory </> "catalog.sqlite"
+              declaration =
+                (Vector.head (moduleDeclarations exampleModule))
+                  { declarationDependencies =
+                      Set.singleton (CanonicalName "DASHI.New.Helper")
+                  }
+              updated =
+                exampleModule
+                  { moduleImports =
+                      Set.singleton (CanonicalName "DASHI.New.Import")
+                  , moduleDeclarations = Vector.singleton declaration
+                  }
+          catalog <- openCatalog path
+          originalHash <- storeModule catalog exampleModule
+          updatedHash <- storeModule catalog updated
+          fetched <-
+            getModule catalog (CanonicalName "DASHI.Example.Identity")
+          closeCatalog catalog
+          assertBool "module head did not advance" (originalHash /= updatedHash)
+          fetched @?= Just updated
+
+          raw <- open path
+          [Only importCount] <-
+            query_ raw "SELECT COUNT(*) FROM module_imports" :: IO [Only Int]
+          [Only dependencyCount] <-
+            query_ raw "SELECT COUNT(*) FROM direct_dependencies" :: IO [Only Int]
+          [Only oldImportCount] <-
+            query_
+              raw
+              "SELECT COUNT(*) FROM module_imports WHERE imported_module_name = 'Agda.Primitive'" ::
+              IO [Only Int]
+          [Only oldDependencyCount] <-
+            query_
+              raw
+              "SELECT COUNT(*) FROM direct_dependencies WHERE dependency_name = 'DASHI.Example.Carrier'" ::
+              IO [Only Int]
+          close raw
+          importCount @?= 1
+          dependencyCount @?= 1
+          oldImportCount @?= 0
+          oldDependencyCount @?= 0
+    , testCase "detects corrupted stored objects" $
+        withSystemTempDirectory "agda2lean-test" $ \directory -> do
+          let path = directory </> "catalog.sqlite"
+          catalog <- openCatalog path
+          ObjectHash objectHash <- storeModule catalog exampleModule
+          closeCatalog catalog
+
+          raw <- open path
+          let original = encodeModule exampleModule
+              corrupted =
+                ByteString.cons
+                  (ByteString.head original `xorByte` 1)
+                  (ByteString.tail original)
+          execute
+            raw
+            "UPDATE ir_objects SET cbor = ?, byte_length = ? WHERE object_hash = ?"
+            (corrupted, ByteString.length corrupted, objectHash)
+          close raw
+
+          reopened <- openCatalog path
+          issues <- verifyCatalog reopened
+          closeCatalog reopened
+          assertBool "corruption was not detected" (not (null issues))
+    , testCase "rejects catalogs from a different codec version" $
+        withSystemTempDirectory "agda2lean-test" $ \directory -> do
+          let path = directory </> "catalog.sqlite"
+          catalog <- openCatalog path
+          closeCatalog catalog
+          raw <- open path
+          execute
+            raw
+            "UPDATE catalog_meta SET value = '999' WHERE key = 'codec_version'"
+            ()
+          close raw
+          opened <- try (openCatalog path) :: IO (Either SomeException Catalog)
+          case opened of
+            Left _ -> pure ()
+            Right unexpected -> do
+              closeCatalog unexpected
+              assertFailure "catalog codec mismatch was accepted"
+    ]
+
+xorByte :: Word8 -> Word8 -> Word8
+xorByte = xor

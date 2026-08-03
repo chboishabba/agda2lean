@@ -327,9 +327,10 @@ toIndexedDeclaration :: CoreDeclaration -> IO IndexedDeclaration
 toIndexedDeclaration declaration = do
   typeTerm <- checkedWord64 "type term ID" (unTermId (declarationType declaration))
   bodyTerm <-
-    traverse
-      (checkedWord64 "body term ID" . unTermId)
-      (declarationBody declaration)
+    case declarationDefinition declaration of
+      TermDefinition body ->
+        Just <$> checkedWord64 "body term ID" (unTermId body)
+      _ -> pure Nothing
   startLine <-
     checkedWord64
       "source start line"

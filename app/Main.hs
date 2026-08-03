@@ -158,9 +158,18 @@ emitLeanParser =
           )
       )
     <*> registryOptionsParser
+    <*> reconstructionPolicyParser
+
+reconstructionPolicyParser :: Parser Bool
+reconstructionPolicyParser =
+  (\allow _deprecatedFail -> allow)
+    <$> switch
+      ( long "allow-reconstruction"
+          <> help "Legacy/testing only: permit sorry at reconstruction boundaries"
+      )
     <*> switch
       ( long "fail-on-reconstruction"
-          <> help "Do not emit sorry at reconstruction boundaries"
+          <> help "Deprecated no-op: fail closed is now the default"
       )
 
 runCommand :: Command -> IO ()
@@ -171,13 +180,13 @@ runCommand (Classify inputPath outputPath) = do
   ByteString.writeFile outputPath (encodeModule (classifyModule moduleIR))
 runCommand (BuiltinInventory outputPath) =
   writeTextAtomic outputPath (inventoryBundle renderBuiltinCoverageInventory)
-runCommand (EmitLean inputPath leanPath diagnosticsPath receiptPath registryOptions failOnReconstruction) = do
+runCommand (EmitLean inputPath leanPath diagnosticsPath receiptPath registryOptions allowReconstruction) = do
   (effectiveRegistry, effectiveDigest) <- loadEffectiveRegistry registryOptions
   bytes <- ByteString.readFile inputPath
   moduleIR <- either (ioError . userError . Text.unpack) pure (decodeModule bytes)
   let emitOptions =
         defaultEmitOptions
-          { emitSorryBodies = not failOnReconstruction
+          { emitSorryBodies = allowReconstruction
           , emitRegistry = effectiveRegistry
           }
   output <-
@@ -297,6 +306,7 @@ registryBundleDigest layers registry =
             , Text.pack (show (platformAxiomEffect mapping))
             , Text.intercalate "," (platformAxiomDelta mapping)
             , Text.pack (show (platformEntityKind mapping))
+            , Text.pack (show (platformArgumentPolicy mapping))
             , Text.pack (show (platformScope mapping))
             ]
         | (builtin, mapping) <- Map.toAscList mappings
