@@ -415,7 +415,6 @@ def extract_frontiers(
             command = [
                 str(backend),
                 "--lean-ir",
-                "--local-interfaces",
                 "-j1",
                 "--compile-dir",
                 str(ir_root),
@@ -450,7 +449,10 @@ def rewrite_platform_imports(source: str, platform_modules: set[str]) -> tuple[s
     replaced: list[str] = []
     for line in source.splitlines():
         match = re.fullmatch(r"import\s+([^\s]+)\s*", line)
-        if match and match.group(1) in platform_modules:
+        if match and (
+            match.group(1) in platform_modules
+            or has_prefix(match.group(1), DEFAULT_PLATFORM_PREFIXES)
+        ):
             module = match.group(1)
             rewritten.append(f"-- agda2lean platform import: {module} -> Lean prelude")
             replaced.append(module)

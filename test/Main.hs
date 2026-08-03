@@ -58,7 +58,7 @@ codecTests =
           @?= moduleObjectHash exampleModule
     , testCase "semantic hash matches the codec-v4 golden object" $
         renderObjectHash (moduleObjectHash exampleModule)
-          @?= "7eeb8aba83ae0e642977926cd6c38ad9ffd9820ed01bdf72bb88a0314f375fd3"
+          @?= "73e5b8bb8f36b464f211a7ab24f8cef20bbbb36fb7900c8588ca24b0383025bc"
     , testCase "rejects trailing bytes" $
         case decodeModule (encodeModule exampleModule <> "\NUL") of
           Left _ -> pure ()

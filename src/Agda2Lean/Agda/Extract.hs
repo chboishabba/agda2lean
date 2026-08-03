@@ -50,6 +50,7 @@ data ExtractState = ExtractState
   , extractTerms :: !(Map TermId CoreTerm)
   , extractInterned :: !(Map CoreTerm TermId)
   , extractBuiltins :: !(Map CanonicalName BuiltinId)
+  , extractConstructorBuiltins :: !(Map CanonicalName BuiltinId)
   , extractConstructorIndices :: !(Map CanonicalName Word64)
   , extractProjectionIndices :: !(Map CanonicalName (CanonicalName, Word64))
   }
@@ -58,16 +59,18 @@ type ExtractM = StateT ExtractState (Either ExtractionError)
 
 initialState ::
   Map CanonicalName BuiltinId ->
+  Map CanonicalName BuiltinId ->
   Map CanonicalName Word64 ->
   Map CanonicalName (CanonicalName, Word64) ->
   ExtractState
-initialState builtins constructorIndices projectionIndices =
+initialState builtins constructorBuiltins constructorIndices projectionIndices =
   ExtractState
     { extractNextTerm = 0
     , extractNextBinder = 0
     , extractTerms = Map.empty
     , extractInterned = Map.empty
     , extractBuiltins = builtins
+    , extractConstructorBuiltins = constructorBuiltins
     , extractConstructorIndices = constructorIndices
     , extractProjectionIndices = projectionIndices
     }
@@ -87,6 +90,17 @@ extractModule source = do
             | declaration <- Vector.toList (agdaModuleDeclarations source)
             , AgdaRecordDefinition schema <- [agdaDeclarationDefinition declaration]
             ]
+      constructorBuiltins =
+        Map.fromList
+          [ (constructor, builtin)
+          | declaration <- Vector.toList (agdaModuleDeclarations source)
+          , Just family <- [agdaDeclarationBuiltin declaration]
+          , AgdaDataDefinition schema <- [agdaDeclarationDefinition declaration]
+          , (constructor, builtin) <-
+              zip
+                (Vector.toList (agdaDataConstructors schema))
+                (builtinFamilyConstructors family)
+          ]
       projectionIndices =
         Map.fromList
           [ (agdaRecordFieldName field, (agdaDeclarationName declaration, index))
@@ -97,7 +111,12 @@ extractModule source = do
   (declarations, finalState) <-
     runStateT
       (mapM extractDeclaration (Vector.toList (agdaModuleDeclarations source)))
-      (initialState (agdaModuleBuiltins source) constructorIndices projectionIndices)
+      ( initialState
+          (agdaModuleBuiltins source)
+          constructorBuiltins
+          constructorIndices
+          projectionIndices
+      )
   let result =
         ModuleIR
           { moduleSchemaVersion = currentSchemaVersion
@@ -110,6 +129,18 @@ extractModule source = do
   case validateModule classified of
     Left issues -> Left (InvalidExtractedModule issues)
     Right valid -> Right valid
+
+-- Some Agda 2.9 builtin families bind the datatype semantically without
+-- exposing a separate pragma binding for every constructor (notably Nat.zero).
+-- Constructor order is part of these builtin datatype schemas, so completing
+-- the family here is stable and avoids falling back to textual qualified names.
+builtinFamilyConstructors :: BuiltinId -> [BuiltinId]
+builtinFamilyConstructors = \case
+  BuiltinNat -> [BuiltinNatZero, BuiltinNatSuc]
+  BuiltinBool -> [BuiltinBoolFalse, BuiltinBoolTrue]
+  BuiltinList -> [BuiltinListNil, BuiltinListCons]
+  BuiltinEquality -> [BuiltinRefl]
+  _ -> []
 
 extractDeclaration :: AgdaDeclaration -> ExtractM CoreDeclaration
 extractDeclaration source = do
@@ -303,9 +334,14 @@ extractPattern :: CanonicalName -> [Binder] -> AgdaPattern -> ExtractM CorePatte
 extractPattern owner context = \case
   AgdaPatternVariable index ->
     PatternVariable . binderId <$> lookupBinder owner index context
-  AgdaPatternConstructor name patterns ->
-    PatternConstructor name . Vector.fromList
-      <$> mapM (extractPattern owner context) (Vector.toList patterns)
+  AgdaPatternConstructor name patterns -> do
+    children <- mapM (extractPattern owner context) (Vector.toList patterns)
+    constructorBuiltins <- gets extractConstructorBuiltins
+    pure
+      ( case Map.lookup name constructorBuiltins of
+          Just builtin -> PatternBuiltin builtin (Vector.fromList children)
+          Nothing -> PatternConstructor name (Vector.fromList children)
+      )
   AgdaPatternBuiltin builtin patterns ->
     PatternBuiltin builtin . Vector.fromList
       <$> mapM (extractPattern owner context) (Vector.toList patterns)
@@ -352,7 +388,8 @@ extractTerm owner context = \case
   AgdaCon name eliminations -> do
     (arguments, residual) <- extractApplyArguments owner context eliminations
     builtins <- gets extractBuiltins
-    case Map.lookup name builtins of
+    constructorBuiltins <- gets extractConstructorBuiltins
+    case Map.lookup name (Map.union builtins constructorBuiltins) of
       Just builtin -> do
         headId <- intern (Builtin builtin)
         applied <- applyArguments headId arguments

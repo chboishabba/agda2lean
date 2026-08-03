@@ -15,6 +15,7 @@ import qualified Agda.Syntax.Literal as Agda
 import Agda.Syntax.Position
 import Agda.Syntax.TopLevelModuleName (TopLevelModuleName)
 import qualified Agda.TypeChecking.Monad.Base as Agda
+import qualified Agda.TypeChecking.Monad.Signature as AgdaSignature
 import qualified Agda.TypeChecking.Primitive as AgdaPrimitive
 import qualified Agda.Syntax.Builtin as AgdaBuiltin
 import qualified Agda.Utils.Maybe.Strict as Strict
@@ -453,12 +454,27 @@ snapshotPatternLiteral = \case
     Left ("dependent-pattern", "metavariable literal patterns are not portable")
 
 activeBuiltinBindings :: TCM (Map.Map Core.CanonicalName Core.BuiltinId)
-activeBuiltinBindings =
-  Map.fromList . mapMaybe id <$> mapM resolve builtinPairs
+activeBuiltinBindings = do
+  direct <- mapMaybe id <$> mapM resolve builtinPairs
+  constructors <- concat <$> mapM resolveFamily builtinFamilies
+  pure (Map.fromList (direct <> constructors))
   where
     resolve (builtin, target) = do
       name <- AgdaPrimitive.getBuiltinName builtin
       pure ((\resolved -> (canonicalName resolved, target)) <$> name)
+
+    resolveFamily (builtin, targets) = do
+      name <- AgdaPrimitive.getBuiltinName builtin
+      case name of
+        Nothing -> pure []
+        Just resolved -> do
+          definition <- AgdaSignature.getConstInfo resolved
+          pure
+            ( case Agda.theDef definition of
+                Agda.Datatype {Agda.dataCons = constructors} ->
+                  zip (map canonicalName constructors) targets
+                _ -> []
+            )
 
     builtinPairs =
       [ (AgdaBuiltin.builtinNat, Core.BuiltinNat)
@@ -483,6 +499,17 @@ activeBuiltinBindings =
       , (AgdaBuiltin.builtinLevelMax, Core.BuiltinLevelMax)
       , (AgdaBuiltin.builtinProp, Core.BuiltinProp)
       , (AgdaBuiltin.builtinSet, Core.BuiltinSet)
+      ]
+
+    -- Agda 2.9 derives several constructor identities from the builtin
+    -- datatype rather than exposing a standalone pragma binding for each one.
+    -- Complete those families from the elaborated datatype schema and its
+    -- kernel constructor order.
+    builtinFamilies =
+      [ (AgdaBuiltin.builtinNat, [Core.BuiltinNatZero, Core.BuiltinNatSuc])
+      , (AgdaBuiltin.builtinBool, [Core.BuiltinBoolFalse, Core.BuiltinBoolTrue])
+      , (AgdaBuiltin.builtinList, [Core.BuiltinListNil, Core.BuiltinListCons])
+      , (AgdaBuiltin.builtinEquality, [Core.BuiltinRefl])
       ]
 
 snapshotType :: Agda.Type -> Snapshot.AgdaTerm
@@ -925,54 +952,286 @@ sourceSpan name =
               Strict.Nothing -> Text.pack (prettyShow name)
               Strict.Just rangeFile' ->
                 Text.pack (filePath (rangeFilePath rangeFile'))
-        , Core.sourceStartLine = fromIntegral (posLine (iStart interval))
-        , Core.sourceEndLine =
-            max
-              (fromIntegral (posLine (iStart interval)))
-              (fromIntegral (posLine (iEnd interval)))
-        }
+        , Core.sw÷}z¶‰žËkºwµço
+            let output =
+                  emitLeanModule
+                    defaultEmitOptions {emitSorryBodies = True}
+                    moduleIR
+            assertBool "reconstruction body lacks sorry" ("sorry" `Text.isInfixOf` leanSource output)
+            assertBool
+              "reconstruction diagnostic missing"
+              ( Vector.any
+                  ((== "A2L-W-RECONSTRUCT") . diagnosticCode)
+                  (leanDiagnostics output)
+              )
+    , testCase "can fail closed instead of emitting reconstruction sorries" $
+        case extractModule reconstructSnapshot of
+          Left issue -> assertFailure (show issue)
+          Right moduleIR -> do
+            let output = emitLeanModule defaultEmitOptions moduleIR
+            assertBool
+              "fail-closed diagnostic missing"
+              ( Vector.any
+                  ((== Error) . diagnosticSeverity)
+                  (leanDiagnostics output)
+              )
+    ]
 
-canonicalName :: Pretty a => a -> Core.CanonicalName
-canonicalName = Core.CanonicalName . Text.pack . prettyShow
+builtinNatModule :: ModuleIR
+builtinNatModule =
+  exampleModule
+    { moduleName = CanonicalName "Agda.Builtin.Nat"
+    , moduleImports =
+        Set.fromList
+          [ CanonicalName "Agda.Builtin.Bool"
+          , CanonicalName "Agda.Primitive"
+          ]
+    , moduleDeclarations = Vector.empty
+    , moduleTerms = Map.empty
+    }
 
-universeNames :: Snapshot.AgdaTerm -> Set.Set Text.Text
-universeNames = \case
-  Snapshot.AgdaVar _ eliminations -> foldMap eliminationUniverses eliminations
-  Snapshot.AgdaLam binder body ->
-    universeNames (Snapshot.agdaBinderType binder) <> universeNames body
-  Snapshot.AgdaDef _ eliminations -> foldMap eliminationUniverses eliminations
-  Snapshot.AgdaCon _ eliminations -> foldMap eliminationUniverses eliminations
-  Snapshot.AgdaPi binder body ->
-    universeNames (Snapshot.agdaBinderType binder) <> universeNames body
-  Snapshot.AgdaSigma binder body ->
-    universeNames (Snapshot.agdaBinderType binder) <> universeNames body
-  Snapshot.AgdaSort universe -> universeLevelNames universe
-  Snapshot.AgdaLevel level -> levelExpressionNames level
-  Snapshot.AgdaEquality type' left right ->
-    universeNames type' <> universeNames left <> universeNames right
-  Snapshot.AgdaLiteral _ _ -> Set.empty
-  Snapshot.AgdaUnsupported _ _ arguments -> foldMap universeNames arguments
+builtinEqualityModule :: ModuleIR
+builtinEqualityModule =
+  ModuleIR
+    { moduleSchemaVersion = currentSchemaVersion
+    , moduleName = CanonicalName "Agda.Builtin.Equality"
+    , moduleImports = Set.singleton (CanonicalName "Agda.Primitive")
+    , moduleTerms = Map.empty
+    , moduleDeclarations =
+        Vector.fromList
+          [ CoreDeclaration
+              { declarationName = CanonicalName "Agda.Builtin.Equality._â‰¡_"
+              , declarationBuiltin = Just BuiltinEquality
+              , declarationRole = AxiomDeclaration
+              , declarationUniverses = Vector.empty
+              , declarationModuleParameters = Vector.empty
+              , declarationType = TermId 0
+              , declarationDefinition = AxiomDefinition
+              , declarationDependencies = Set.empty
+              , declarationFeatures = Set.empty
+              , declarationSource = SourceSpan "Agda/Builtin/Equality.agda" 1 1
+              , declarationMapping = Exact
+              }
+          , CoreDeclaration
+              { declarationName = CanonicalName "Agda.Builtin.Equality._â‰¡_.refl"
+              , declarationBuiltin = Just BuiltinRefl
+              , declarationRole = Theorem
+              , declarationUniverses = Vector.empty
+              , declarationModuleParameters = Vector.empty
+              , declarationType = TermId 0
+              , declarationDefinition = AxiomDefinition
+              , declarationDependencies = Set.empty
+              , declarationFeatures = Set.empty
+              , declarationSource = SourceSpan "Agda/Builtin/Equality.agda" 2 2
+              , declarationMapping = Exact
+              }
+          ]
+    }
 
-levelExpressionNames :: Snapshot.AgdaLevelExpr -> Set.Set Text.Text
-levelExpressionNames = \case
-  Snapshot.AgdaLevelZero -> Set.empty
-  Snapshot.AgdaLevelSuccessor level -> levelExpressionNames level
-  Snapshot.AgdaLevelMaximum levels -> foldMap levelExpressionNames levels
-  -- The binder is local; declarationUniverses only records free level names.
-  Snapshot.AgdaLevelVariable _ -> Set.empty
+validationTests :: TestTree
+validationTests =
+  testGroup
+    "validation"
+    [ testCase "rejects a missing declaration type" $
+        case
+            validateModule
+              exampleModule
+                { moduleTerms =
+                    Map.delete (TermId 2) (moduleTerms exampleModule)
+                }
+          of
+            Left _ -> pure ()
+            Right _ -> assertFailure "missing declaration type was accepted"
+    , testCase "unsupported declarations cannot carry bodies" $
+        let declarations = moduleDeclarations exampleModule
+            declaration = Vector.head declarations
+            invalid =
+              exampleModule
+                { moduleDeclarations =
+                    Vector.singleton
+                      declaration {declarationMapping = Unsupported}
+                }
+         in case validateModule invalid of
+              Left _ -> pure ()
+              Right _ -> assertFailure "unsupported proof body was accepted"
+    , testCase "declarations must belong to their module namespace" $
+        let declaration = Vector.head (moduleDeclarations exampleModule)
+            invalid =
+              exampleModule
+                { moduleDeclarations =
+                    Vector.singleton
+                      declaration
+                        { declarationName = CanonicalName "Other.identity"
+                        }
+                }
+         in case validateModule invalid of
+              Left _ -> pure ()
+              Right _ -> assertFailure "cross-module declaration name was accepted"
+    ]
 
-eliminationUniverses :: Snapshot.AgdaElimination -> Set.Set Text.Text
-eliminationUniverses = \case
-  Snapshot.AgdaApply _ _ term -> universeNames term
-  Snapshot.AgdaProject _ -> Set.empty
-  Snapshot.AgdaIntervalApply left right interval ->
-    universeNames left <> universeNames right <> universeNames interval
+classificationTests :: TestTree
+classificationTests =
+  testGroup
+    "feature classification"
+    [ testCase "ordinary definitions remain exact" $
+        classificationMode
+          ( classifyDeclaration
+              exampleModule
+              (Vector.head (moduleDeclarations exampleModule))
+          )
+          @?= Exact
+    , testCase "Cubical terms are quarantined" $
+        let cubicalTermId = TermId 5
+            terms =
+              Map.insert
+                cubicalTermId
+                (Extension (CubicalPrimitive "comp" Vector.empty))
+                (moduleTerms exampleModule)
+            declaration =
+              (Vector.head (moduleDeclarations exampleModule))
+                { declarationType = cubicalTermId
+                , declarationDefinition = AxiomDefinition
+                }
+            cubicalModule =
+              exampleModule
+                { moduleTerms = terms
+                , moduleDeclarations = Vector.singleton declaration
+                }
+         in classificationMode
+              (classifyDeclaration cubicalModule declaration)
+              @?= Quarantined
+    , testCase "module parameter features cannot bypass classification" $
+        let cubicalTermId = TermId 5
+            terms =
+              Map.insert
+                cubicalTermId
+                (Extension (CubicalPrimitive "interval" Vector.empty))
+                (moduleTerms exampleModule)
+            declaration =
+              (Vector.head (moduleDeclarations exampleModule))
+                { declarationModuleParameters =
+                    Vector.singleton
+                      Binder
+                        { binderId = BinderId 99
+                        , binderName = "I"
+                        , binderType = cubicalTermId
+                        , binderVisibility = Implicit
+                        , binderRelevance = Relevant
+                        }
+                }
+            parameterModule =
+              exampleModule
+                { moduleTerms = terms
+                , moduleDeclarations = Vector.singleton declaration
+                }
+         in classificationMode
+              (classifyDeclaration parameterModule declaration)
+              @?= Quarantined
+    ]
 
-universeLevelNames :: Core.Universe -> Set.Set Text.Text
-universeLevelNames = \case
-  Core.UZero -> Set.empty
-  Core.USuc universe -> universeLevelNames universe
-  Core.UMax universes -> foldMap universeLevelNames universes
-  Core.ULevel name -> Set.singleton name
-  Core.UProp universe -> universeLevelNames universe
-  Core.USSet universe -> universeLevelNames universe
+catalogTests :: TestTree
+catalogTests =
+  testGroup
+    "SQLite catalog"
+    [ testCase "deduplicates immutable module objects" $
+        withSystemTempDirectory "agda2lean-test" $ \directory -> do
+          let path = directory </> "catalog.sqlite"
+          catalog <- openCatalog path
+          firstHash <- storeModule catalog exampleModule
+          secondHash <- storeModule catalog exampleModule
+          stats <- readCatalogStats catalog
+          fetched <-
+            getModule catalog (CanonicalName "DASHI.Example.Identity")
+          closeCatalog catalog
+          firstHash @?= secondHash
+          statsModules stats @?= 1
+          statsObjects stats @?= 1
+          statsDeclarations stats @?= 1
+          fetched @?= Just exampleModule
+    , testCase "atomically replaces a module head and its indexes" $
+        withSystemTempDirectory "agda2lean-test" $ \directory -> do
+          let path = directory </> "catalog.sqlite"
+              declaration =
+                (Vector.head (moduleDeclarations exampleModule))
+                  { declarationDependencies =
+                      Set.singleton (CanonicalName "DASHI.New.Helper")
+                  }
+              updated =
+                exampleModule
+                  { moduleImports =
+                      Set.singleton (CanonicalName "DASHI.New.Import")
+                  , moduleDeclarations = Vector.singleton declaration
+                  }
+          catalog <- openCatalog path
+          originalHash <- storeModule catalog exampleModule
+          updatedHash <- storeModule catalog updated
+          fetched <-
+            getModule catalog (CanonicalName "DASHI.Example.Identity")
+          closeCatalog catalog
+          assertBool "module head did not advance" (originalHash /= updatedHash)
+          fetched @?= Just updated
+
+          raw <- open path
+          [Only importCount] <-
+            query_ raw "SELECT COUNT(*) FROM module_imports" :: IO [Only Int]
+          [Only dependencyCount] <-
+            query_ raw "SELECT COUNT(*) FROM direct_dependencies" :: IO [Only Int]
+          [Only oldImportCount] <-
+            query_
+              raw
+              "SELECT COUNT(*) FROM module_imports WHERE imported_module_name = 'Agda.Primitive'" ::
+              IO [Only Int]
+          [Only oldDependencyCount] <-
+            query_
+              raw
+              "SELECT COUNT(*) FROM direct_dependencies WHERE dependency_name = 'DASHI.Example.Carrier'" ::
+              IO [Only Int]
+          close raw
+          importCount @?= 1
+          dependencyCount @?= 1
+          oldImportCount @?= 0
+          oldDependencyCount @?= 0
+    , testCase "detects corrupted stored objects" $
+        withSystemTempDirectory "agda2lean-test" $ \directory -> do
+          let path = directory </> "catalog.sqlite"
+          catalog <- openCatalog path
+          ObjectHash objectHash <- storeModule catalog exampleModule
+          closeCatalog catalog
+
+          raw <- open path
+          let original = encodeModule exampleModule
+              corrupted =
+                ByteString.cons
+                  (ByteString.head original `xorByte` 1)
+                  (ByteString.tail original)
+          execute
+            raw
+            "UPDATE ir_objects SET cbor = ?, byte_length = ? WHERE object_hash = ?"
+            (corrupted, ByteString.length corrupted, objectHash)
+          close raw
+
+          reopened <- openCatalog path
+          issues <- verifyCatalog reopened
+          closeCatalog reopened
+          assertBool "corruption was not detected" (not (null issues))
+    , testCase "rejects catalogs from a different codec version" $
+        withSystemTempDirectory "agda2lean-test" $ \directory -> do
+          let path = directory </> "catalog.sqlite"
+          catalog <- openCatalog path
+          closeCatalog catalog
+          raw <- open path
+          execute
+            raw
+            "UPDATE catalog_meta SET value = '999' WHERE key = 'codec_version'"
+            ()
+          close raw
+          opened <- try (openCatalog path) :: IO (Either SomeException Catalog)
+          case opened of
+            Left _ -> pure ()
+            Right unexpected -> do
+              closeCatalog unexpected
+              assertFailure "catalog codec mismatch was accepted"
+    ]
+
+xorByte :: Word8 -> Word8 -> Word8
+xorByte = xor

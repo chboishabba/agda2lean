@@ -337,13 +337,22 @@ emitDeclaration options moduleIR declaration =
           case renderRoot options moduleIR body of
             Left reason -> blocked renderedType reason
             Right renderedBody ->
+              let loweredBody =
+                    case Map.lookup body (moduleTerms moduleIR) of
+                      -- Agda constructor spines omit datatype parameters, so
+                      -- an ordinary `refl` proof reaches the IR as the bare
+                      -- semantic constructor.  Lean's bare `Eq.refl` is still
+                      -- polymorphic; `by rfl` uses the expected theorem type.
+                      Just (Builtin BuiltinRefl) -> "by rfl"
+                      _ -> renderedBody
+               in
               ( [ declarationKeyword
                     <> " "
                     <> name
                     <> " : "
                     <> renderedType
                     <> " := "
-                    <> renderedBody
+                    <> loweredBody
                 ]
               , []
               )
@@ -799,7 +808,12 @@ runRender options moduleIR action =
 
 moduleNameOverrides :: ModuleIR -> Map CanonicalName Text
 moduleNameOverrides moduleIR =
-  Map.fromList (concatMap declarationOverrides (Vector.toList (moduleDeclarations moduleIR)))
+  -- A record constructor also has its own ConstructorDefinition declaration.
+  -- Keep the earlier RecordDefinition override to `.mk` instead of allowing
+  -- the later generic constructor rule to overwrite it with the Agda name.
+  Map.fromListWith
+    (\_new earlier -> earlier)
+    (concatMap declarationOverrides (Vector.toList (moduleDeclarations moduleIR)))
   where
     declarationOverrides declaration =
       case declarationDefinition declaration of

@@ -74,12 +74,17 @@ class ProjectPlanTests(unittest.TestCase):
                 A2L.make_plan(modules, ("A",), A2L.DEFAULT_PLATFORM_PREFIXES, ())
 
     def test_platform_import_rewrite_is_explicit_and_stable(self):
-        source = "import Agda.Builtin.Nat\nimport Project.Module\n\nnamespace Root\n"
+        source = (
+            "import Agda.Builtin.Nat\n"
+            "import Agda.Primitive\n"
+            "import Project.Module\n\nnamespace Root\n"
+        )
         rewritten, receipt = A2L.rewrite_platform_imports(
             source, {"Agda.Builtin.Nat"}
         )
-        self.assertEqual(receipt, ["Agda.Builtin.Nat"])
+        self.assertEqual(receipt, ["Agda.Builtin.Nat", "Agda.Primitive"])
         self.assertIn("Agda.Builtin.Nat -> Lean prelude", rewritten)
+        self.assertIn("Agda.Primitive -> Lean prelude", rewritten)
         self.assertIn("import Project.Module", rewritten)
 
     def test_build_reuses_isolated_cache_and_regenerates_identically(self):
@@ -99,6 +104,8 @@ class ProjectPlanTests(unittest.TestCase):
                         print("Agda version 2.9.0 / fake LeanIR backend")
                         raise SystemExit(0)
                     args = sys.argv[1:]
+                    if "--local-interfaces" in args:
+                        raise SystemExit("Agda 2.9 removed --local-interfaces")
                     out = pathlib.Path(args[args.index("--compile-dir") + 1])
                     source = pathlib.Path(args[-1])
                     name = re.search(r"(?m)^module\\s+(\\S+)\\s+where", source.read_text()).group(1)

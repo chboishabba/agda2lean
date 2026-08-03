@@ -236,8 +236,11 @@ platformMappings = Map.fromList [(platformBuiltin mapping, mapping) | mapping <-
       , entry BuiltinBoolTrue "Agda.Builtin.Bool.Bool.true" "true" "constructor" BuiltinConstructor
       , entry BuiltinBoolFalse "Agda.Builtin.Bool.Bool.false" "false" "constructor" BuiltinConstructor
       , entryWithPolicy BuiltinList "Agda.Builtin.List.List" "List" "exact-inductive" BuiltinDatatype 2 [1]
-      , entryWithPolicy BuiltinListNil "Agda.Builtin.List.List.[]" "List.nil" "constructor" BuiltinConstructor 2 [1]
-      , entryWithPolicy BuiltinListCons "Agda.Builtin.List.List._∷_" "List.cons" "constructor" BuiltinConstructor 4 [1, 2, 3]
+      -- Agda's internal Con spine has already removed datatype parameters:
+      -- [] has no arguments and _∷_ carries only head and tail.  The List
+      -- type constructor itself still needs its hidden level projected away.
+      , entry BuiltinListNil "Agda.Builtin.List.List.[]" "List.nil" "constructor" BuiltinConstructor
+      , entry BuiltinListCons "Agda.Builtin.List.List._∷_" "List.cons" "constructor" BuiltinConstructor
       , entry BuiltinEquality "Agda.Builtin.Equality._≡_" "Eq" "ordinary-equality" BuiltinDatatype
       , entryWithPolicy BuiltinRefl "Agda.Builtin.Equality._≡_.refl" "Eq.refl" "constructor" BuiltinConstructor 3 [1, 2]
       , entry BuiltinLevel "Agda.Primitive.Level" "Type" "universe" BuiltinSort

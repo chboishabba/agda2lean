@@ -222,8 +222,10 @@ semanticLoweringTests =
         platformTarget (platformMappings Map.! BuiltinListCons) @?= "List.cons"
         platformArgumentPolicy (platformMappings Map.! BuiltinList)
           @?= ProjectArguments 2 (Vector.singleton 1)
+        platformArgumentPolicy (platformMappings Map.! BuiltinListNil)
+          @?= PreserveArguments
         platformArgumentPolicy (platformMappings Map.! BuiltinListCons)
-          @?= ProjectArguments 4 (Vector.fromList [1, 2, 3])
+          @?= PreserveArguments
     , testCase "erases Agda's hidden List level and retains its element type" $ do
         let output = emitLeanModule defaultEmitOptions listApplicationModule
         assertBool
