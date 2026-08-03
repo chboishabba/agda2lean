@@ -153,6 +153,18 @@ compileDefinition ::
   TCM Snapshot.AgdaDeclaration
 compileDefinition _ ModuleEnvironment {..} _ definition =
   let extractedType = snapshotType (Agda.defType definition)
+      extractedDefinition
+        | Core.UnsafeUniverse `Set.member` termFeaturesSnapshot extractedType =
+            Snapshot.AgdaBlockedDefinition
+              "definition-kind"
+              ( Core.unCanonicalName (canonicalName (Agda.defName definition))
+                  <> ": declaration type contains an unsafe/unsolved universe term"
+              )
+        | otherwise =
+            snapshotDefinition
+              environmentBuiltins
+              (canonicalName (Agda.defName definition))
+              (Agda.theDef definition)
    in pure
     Snapshot.AgdaDeclaration
       { Snapshot.agdaDeclarationName = canonicalName (Agda.defName definition)
@@ -165,15 +177,280 @@ compileDefinition _ ModuleEnvironment {..} _ definition =
       -- this metadata empty avoids duplicating the telescope in the IR.
       , Snapshot.agdaDeclarationModuleParameters = Vector.empty
       , Snapshot.agdaDeclarationType = extractedType
-      -- Proof strategy is intentionally not copied. General Agda clauses are
-      -- reconstructed natively in Lean; their elaborated statement and direct
-      -- dependencies are still extracted exactly here.
-      , Snapshot.agdaDeclarationBody = Nothing
+      , Snapshot.agdaDeclarationDefinition = extractedDefinition
       , Snapshot.agdaDeclarationAdditionalDependencies =
           definitionBodyDependencies definition
       , Snapshot.agdaDeclarationFeatures = definitionFeatures definition
       , Snapshot.agdaDeclarationSource = sourceSpan (Agda.defName definition)
       }
+
+snapshotDefinition ::
+  Map.Map Core.CanonicalName Core.BuiltinId ->
+  Core.CanonicalName ->
+  Agda.Defn ->
+  Snapshot.AgdaDeclarationDefinition
+snapshotDefinition builtins owner = \case
+  Agda.Axiom {} -> Snapshot.AgdaAxiomDefinition
+  Agda.Datatype
+    { Agda.dataPars = parameterCount
+    , Agda.dataCons = constructors
+    , Agda.dataPathCons = pathConstructors
+    }
+      | null pathConstructors ->
+          Snapshot.AgdaDataDefinition
+            Snapshot.AgdaDataSchema
+              { Snapshot.agdaDataParameterCount = fromIntegral parameterCount
+              , Snapshot.agdaDataConstructors =
+                  Vector.fromList (map canonicalName constructors)
+              }
+      | otherwise ->
+          blocked
+            "dependent-pattern"
+            "higher-inductive path constructors are outside the portable fragment"
+  Agda.Record
+    { Agda.recPars = parameterCount
+    , Agda.recConHead = constructor
+    , Agda.recFields = fields
+    , Agda.recTel = telescope
+    , Agda.recInduction = induction
+    }
+      | induction == Just Agda.CoInductive ->
+          blocked
+            "definition-kind"
+            "coinductive records are outside the portable fragment"
+      | otherwise ->
+          let binders = snapshotTelescope telescope
+              (parameters, fieldBinders) = splitAt parameterCount binders
+              fieldNames = map (canonicalName . Agda.unDom) fields
+           in if length fieldNames /= length fieldBinders
+                then
+                  blocked
+                    "definition-kind"
+                    ( "record telescope/field mismatch: "
+                        <> Text.pack (show (length fieldBinders))
+                        <> " field binders for "
+                        <> Text.pack (show (length fieldNames))
+                        <> " names"
+                    )
+                else
+                  if any
+                    ( Set.member Core.UnsafeUniverse
+                        . termFeaturesSnapshot
+                        . Snapshot.agdaBinderType
+                    )
+                    binders
+                    then
+                      blocked
+                        "definition-kind"
+                        "record telescope contains an unsafe/unsolved universe term"
+                    else
+                      Snapshot.AgdaRecordDefinition
+                        Snapshot.AgdaRecordSchema
+                          { Snapshot.agdaRecordParameters = Vector.fromList parameters
+                          , Snapshot.agdaRecordConstructor =
+                              canonicalName (Agda.conName constructor)
+                          , Snapshot.agdaRecordFields =
+                              Vector.fromList
+                                ( zipWith
+                                    (\name binder ->
+                                       Snapshot.AgdaRecordField
+                                         { Snapshot.agdaRecordFieldName = name
+                                         , Snapshot.agdaRecordFieldType =
+                                             Snapshot.agdaBinderType binder
+                                         }
+                                    )
+                                    fieldNames
+                                    fieldBinders
+                                )
+                          }
+  Agda.Constructor {Agda.conData = datatype} ->
+    Snapshot.AgdaConstructorDefinition
+      Snapshot.AgdaConstructorSchema
+        { Snapshot.agdaConstructorOwner = canonicalName datatype
+        }
+  Agda.Function {Agda.funProjection = Right projection}
+    | Just record <- Agda.projProper projection ->
+        Snapshot.AgdaProjectionDefinition
+          Snapshot.AgdaProjectionSchema
+            { Snapshot.agdaProjectionRecord = canonicalName record
+            , Snapshot.agdaProjectionField = owner
+            , Snapshot.agdaProjectionIndex =
+                fromIntegral (max 0 (Agda.projIndex projection))
+            }
+  Agda.Function {Agda.funClauses = clauses} ->
+    snapshotClauses builtins owner clauses
+  Agda.Primitive {Agda.primClauses = clauses}
+    | not (null clauses) -> snapshotClauses builtins owner clauses
+    | otherwise ->
+        blocked
+          "definition-kind"
+          "opaque Agda primitive has no portable clause body"
+  Agda.PrimitiveSort {} ->
+    blocked
+      "definition-kind"
+      "Agda primitive sorts require a platform mapping"
+  Agda.AbstractDefn inner -> snapshotDefinition builtins owner inner
+  other ->
+    blocked
+      "definition-kind"
+      ("unsupported Agda definition: " <> Text.pack (prettyShow other))
+  where
+    blocked code detail = Snapshot.AgdaBlockedDefinition code detail
+
+snapshotClauses ::
+  Map.Map Core.CanonicalName Core.BuiltinId ->
+  Core.CanonicalName ->
+  [Agda.Clause] ->
+  Snapshot.AgdaDeclarationDefinition
+snapshotClauses builtins owner clauses =
+  case traverse (snapshotClause builtins owner) clauses of
+    Left (code, detail) -> Snapshot.AgdaBlockedDefinition code detail
+    Right [] ->
+      Snapshot.AgdaBlockedDefinition
+        "clause-body"
+        (Core.unCanonicalName owner <> ": definition has no executable clauses")
+    Right portable
+      | any clauseHasUnsafeUniverse portable ->
+          Snapshot.AgdaBlockedDefinition
+            "clause-body"
+            ( Core.unCanonicalName owner
+                <> ": clause body contains an unsolved/internal universe term"
+            )
+    Right [clause]
+      | Vector.null (Snapshot.agdaClauseTelescope clause)
+      , Vector.null (Snapshot.agdaClausePatterns clause) ->
+          Snapshot.AgdaTermDefinition (Snapshot.agdaClauseBody clause)
+    Right portable ->
+      Snapshot.AgdaClauseDefinition (Vector.fromList portable)
+  where
+    clauseHasUnsafeUniverse clause =
+      Core.UnsafeUniverse
+        `Set.member` ( termFeaturesSnapshot (Snapshot.agdaClauseBody clause)
+                        <> foldMap
+                          (termFeaturesSnapshot . Snapshot.agdaBinderType)
+                          (Snapshot.agdaClauseTelescope clause)
+                    )
+
+termFeaturesSnapshot :: Snapshot.AgdaTerm -> Set.Set Core.Feature
+termFeaturesSnapshot = \case
+  Snapshot.AgdaVar _ eliminations -> foldMap eliminationFeaturesSnapshot eliminations
+  Snapshot.AgdaLam binder body ->
+    termFeaturesSnapshot (Snapshot.agdaBinderType binder) <> termFeaturesSnapshot body
+  Snapshot.AgdaDef _ eliminations -> foldMap eliminationFeaturesSnapshot eliminations
+  Snapshot.AgdaCon _ eliminations -> foldMap eliminationFeaturesSnapshot eliminations
+  Snapshot.AgdaPi binder body ->
+    termFeaturesSnapshot (Snapshot.agdaBinderType binder) <> termFeaturesSnapshot body
+  Snapshot.AgdaSigma binder body ->
+    termFeaturesSnapshot (Snapshot.agdaBinderType binder) <> termFeaturesSnapshot body
+  Snapshot.AgdaSort _ -> Set.empty
+  Snapshot.AgdaLevel _ -> Set.empty
+  Snapshot.AgdaEquality type' left right ->
+    Set.insert
+      Core.OrdinaryEquality
+      (termFeaturesSnapshot type' <> termFeaturesSnapshot left <> termFeaturesSnapshot right)
+  Snapshot.AgdaLiteral _ _ -> Set.empty
+  Snapshot.AgdaUnsupported feature _ arguments ->
+    Set.insert feature (foldMap termFeaturesSnapshot arguments)
+
+eliminationFeaturesSnapshot :: Snapshot.AgdaElimination -> Set.Set Core.Feature
+eliminationFeaturesSnapshot = \case
+  Snapshot.AgdaApply _ _ term -> termFeaturesSnapshot term
+  Snapshot.AgdaProject _ -> Set.empty
+  Snapshot.AgdaIntervalApply left right interval ->
+    Set.insert
+      Core.Cubical
+      ( termFeaturesSnapshot left
+          <> termFeaturesSnapshot right
+          <> termFeaturesSnapshot interval
+      )
+
+snapshotClause ::
+  Map.Map Core.CanonicalName Core.BuiltinId ->
+  Core.CanonicalName ->
+  Agda.Clause ->
+  Either (Text.Text, Text.Text) Snapshot.AgdaClause
+snapshotClause builtins owner clause = do
+  body <-
+    maybe
+      ( Left
+          ( "clause-body"
+          , Core.unCanonicalName owner <> ": absurd clauses are not yet portable"
+          )
+      )
+      (Right . snapshotTerm)
+      (Agda.clauseBody clause)
+  patterns <-
+    traverse
+      (snapshotPattern builtins . Agda.namedArg)
+      (filter explicitNamedArgument (Agda.namedClausePats clause))
+  pure
+    Snapshot.AgdaClause
+      { Snapshot.agdaClauseTelescope =
+          Vector.fromList (snapshotTelescope (Agda.clauseTel clause))
+      , Snapshot.agdaClausePatterns = Vector.fromList patterns
+      , Snapshot.agdaClauseBody = body
+      }
+
+snapshotPattern ::
+  Map.Map Core.CanonicalName Core.BuiltinId ->
+  Agda.DeBruijnPattern ->
+  Either (Text.Text, Text.Text) Snapshot.AgdaPattern
+snapshotPattern builtins = \case
+  Agda.VarP info variable
+    | Agda.patOrigin info == Agda.PatOWild ->
+        Right Snapshot.AgdaPatternWildcard
+    | Agda.patOrigin info == Agda.PatOAbsurd ->
+        Left ("dependent-pattern", "absurd patterns require motive reconstruction")
+    | otherwise ->
+        Right (Snapshot.AgdaPatternVariable (Agda.dbPatVarIndex variable))
+  Agda.ConP constructor _ arguments -> do
+    children <-
+      traverse
+        (snapshotPattern builtins . Agda.namedArg)
+        (filter explicitNamedArgument arguments)
+    let name = canonicalName (Agda.conName constructor)
+    pure
+      ( case Map.lookup name builtins of
+          Just builtin -> Snapshot.AgdaPatternBuiltin builtin (Vector.fromList children)
+          Nothing -> Snapshot.AgdaPatternConstructor name (Vector.fromList children)
+      )
+  Agda.LitP _ literal -> do
+    (kind, value) <- snapshotPatternLiteral literal
+    Right (Snapshot.AgdaPatternLiteral kind value)
+  Agda.DotP {} ->
+    Left ("dependent-pattern", "dot/forced patterns require motive reconstruction")
+  Agda.ProjP {} ->
+    Left ("dependent-pattern", "projection copatterns are outside the portable fragment")
+  Agda.IApplyP {} ->
+    Left ("dependent-pattern", "cubical interval patterns are outside the portable fragment")
+  Agda.DefP {} ->
+    Left ("dependent-pattern", "higher-inductive definition patterns are outside the portable fragment")
+
+explicitNamedArgument :: Agda.NamedArg a -> Bool
+explicitNamedArgument argument =
+  Agda.getHiding (Agda.getArgInfo argument) == Agda.NotHidden
+
+snapshotTelescope :: Agda.Telescope -> [Snapshot.AgdaBinder]
+snapshotTelescope = \case
+  Agda.EmptyTel -> []
+  Agda.ExtendTel domain abstraction ->
+    snapshotDomain domain (Agda.absName abstraction)
+      : snapshotTelescope (Agda.unAbs abstraction)
+
+snapshotPatternLiteral ::
+  Agda.Literal ->
+  Either (Text.Text, Text.Text) (Text.Text, Text.Text)
+snapshotPatternLiteral = \case
+  Agda.LitNat value -> Right ("nat", Text.pack (show value))
+  Agda.LitWord64 value -> Right ("nat", Text.pack (show value))
+  Agda.LitString value -> Right ("string", value)
+  Agda.LitChar value -> Right ("char", Text.singleton value)
+  Agda.LitFloat _ ->
+    Left ("dependent-pattern", "floating-point literal patterns are not portable to Lean")
+  Agda.LitQName _ ->
+    Left ("dependent-pattern", "quoted-name literal patterns require reflection support")
+  Agda.LitMeta _ _ ->
+    Left ("dependent-pattern", "metavariable literal patterns are not portable")
 
 activeBuiltinBindings :: TCM (Map.Map Core.CanonicalName Core.BuiltinId)
 activeBuiltinBindings =
@@ -195,6 +472,9 @@ activeBuiltinBindings =
       , (AgdaBuiltin.builtinBool, Core.BuiltinBool)
       , (AgdaBuiltin.builtinTrue, Core.BuiltinBoolTrue)
       , (AgdaBuiltin.builtinFalse, Core.BuiltinBoolFalse)
+      , (AgdaBuiltin.builtinList, Core.BuiltinList)
+      , (AgdaBuiltin.builtinNil, Core.BuiltinListNil)
+      , (AgdaBuiltin.builtinCons, Core.BuiltinListCons)
       , (AgdaBuiltin.builtinEquality, Core.BuiltinEquality)
       , (AgdaBuiltin.builtinRefl, Core.BuiltinRefl)
       , (AgdaBuiltin.builtinLevel, Core.BuiltinLevel)
@@ -240,11 +520,7 @@ snapshotTerm = \case
       (snapshotDomain domain (Agda.absName codomain))
       (snapshotType (Agda.unAbs codomain))
   Agda.Sort sort' -> Snapshot.AgdaSort (snapshotSort sort')
-  Agda.Level level ->
-    Snapshot.AgdaUnsupported
-      Core.UnsafeUniverse
-      ("first-class Agda level: " <> Text.pack (prettyShow level))
-      Vector.empty
+  Agda.Level level -> snapshotFirstClassLevel level
   Agda.MetaV meta eliminations ->
     Snapshot.AgdaUnsupported
       Core.UnsafeUniverse
@@ -348,6 +624,45 @@ iterateSuccessor :: Integer -> Core.Universe -> Core.Universe
 iterateSuccessor count universe
   | count <= 0 = universe
   | otherwise = iterateSuccessor (count - 1) (Core.USuc universe)
+
+snapshotFirstClassLevel :: Agda.Level -> Snapshot.AgdaTerm
+snapshotFirstClassLevel level@(Agda.Max closed atoms) =
+  case traverse snapshotLevelAtom atoms of
+    Nothing ->
+      Snapshot.AgdaUnsupported
+        Core.UnsafeUniverse
+        ("non-variable first-class Agda level: " <> Text.pack (prettyShow level))
+        ( Vector.fromList
+            [ snapshotTerm atom
+            | Agda.Plus _ atom <- atoms
+            ]
+        )
+    Just variables ->
+      Snapshot.AgdaLevel
+        (maximumLevelExpr (iterateLevelSuccessor closed Snapshot.AgdaLevelZero : variables))
+  where
+    snapshotLevelAtom (Agda.Plus offset atom) =
+      case atom of
+        Agda.Var index [] ->
+          Just
+            ( iterateLevelSuccessor
+                offset
+                (Snapshot.AgdaLevelVariable index)
+            )
+        _ -> Nothing
+
+maximumLevelExpr :: [Snapshot.AgdaLevelExpr] -> Snapshot.AgdaLevelExpr
+maximumLevelExpr levels =
+  case filter (/= Snapshot.AgdaLevelZero) levels of
+    [] -> Snapshot.AgdaLevelZero
+    [level] -> level
+    several -> Snapshot.AgdaLevelMaximum (Vector.fromList several)
+
+iterateLevelSuccessor :: Integer -> Snapshot.AgdaLevelExpr -> Snapshot.AgdaLevelExpr
+iterateLevelSuccessor count level
+  | count <= 0 = level
+  | otherwise =
+      iterateLevelSuccessor (count - 1) (Snapshot.AgdaLevelSuccessor level)
 
 visibility :: Agda.ArgInfo -> Core.Visibility
 visibility info =
@@ -632,10 +947,19 @@ universeNames = \case
   Snapshot.AgdaSigma binder body ->
     universeNames (Snapshot.agdaBinderType binder) <> universeNames body
   Snapshot.AgdaSort universe -> universeLevelNames universe
+  Snapshot.AgdaLevel level -> levelExpressionNames level
   Snapshot.AgdaEquality type' left right ->
     universeNames type' <> universeNames left <> universeNames right
   Snapshot.AgdaLiteral _ _ -> Set.empty
   Snapshot.AgdaUnsupported _ _ arguments -> foldMap universeNames arguments
+
+levelExpressionNames :: Snapshot.AgdaLevelExpr -> Set.Set Text.Text
+levelExpressionNames = \case
+  Snapshot.AgdaLevelZero -> Set.empty
+  Snapshot.AgdaLevelSuccessor level -> levelExpressionNames level
+  Snapshot.AgdaLevelMaximum levels -> foldMap levelExpressionNames levels
+  -- The binder is local; declarationUniverses only records free level names.
+  Snapshot.AgdaLevelVariable _ -> Set.empty
 
 eliminationUniverses :: Snapshot.AgdaElimination -> Set.Set Text.Text
 eliminationUniverses = \case

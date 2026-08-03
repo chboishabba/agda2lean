@@ -42,7 +42,7 @@ import qualified Data.Vector as Vector
 import Data.Word (Word16)
 
 codecVersion :: Word16
-codecVersion = 3
+codecVersion = 4
 
 encodeModule :: ModuleIR -> ByteString
 encodeModule = toStrictByteString . encodeModuleIR
@@ -143,6 +143,27 @@ decodeUniverse = do
     (5, 2) -> USSet <$> decodeUniverse
     _ -> fail "invalid Universe encoding"
 
+encodeLevelExpr :: LevelExpr -> Encoding
+encodeLevelExpr = \case
+  LevelZero -> encodeListLen 1 <> encodeWord 0
+  LevelSuccessor level ->
+    encodeListLen 2 <> encodeWord 1 <> encodeLevelExpr level
+  LevelMaximum levels ->
+    encodeListLen 2 <> encodeWord 2 <> encodeVector encodeLevelExpr levels
+  LevelVariable binder ->
+    encodeListLen 2 <> encodeWord 3 <> encodeBinderId binder
+
+decodeLevelExpr :: Decoder s LevelExpr
+decodeLevelExpr = do
+  length' <- decodeListLen
+  tag <- decodeWord
+  case (tag, length') of
+    (0, 1) -> pure LevelZero
+    (1, 2) -> LevelSuccessor <$> decodeLevelExpr
+    (2, 2) -> LevelMaximum <$> decodeVector decodeLevelExpr
+    (3, 2) -> LevelVariable <$> decodeBinderId
+    _ -> fail "invalid LevelExpr encoding"
+
 encodeBinder :: Binder -> Encoding
 encodeBinder binder =
   encodeListLen 5
@@ -214,6 +235,8 @@ encodeCoreTerm = \case
     encodeListLen 2 <> encodeWord 0 <> encodeBinderId binderId
   Sort universe ->
     encodeListLen 2 <> encodeWord 1 <> encodeUniverse universe
+  Level level ->
+    encodeListLen 2 <> encodeWord 12 <> encodeLevelExpr level
   Pi binder body ->
     encodeListLen 3 <> encodeWord 2 <> encodeBinder binder <> encodeTermId body
   Sigma binder body ->
@@ -255,6 +278,7 @@ decodeCoreTerm = do
   case (tag, length') of
     (0, 2) -> Var <$> decodeBinderId
     (1, 2) -> Sort <$> decodeUniverse
+    (12, 2) -> Level <$> decodeLevelExpr
     (2, 3) -> Pi <$> decodeBinder <*> decodeTermId
     (3, 3) -> Sigma <$> decodeBinder <*> decodeTermId
     (4, 3) -> Lam <$> decodeBinder <*> decodeTermId
@@ -308,7 +332,7 @@ encodeDeclaration declaration =
     <> encodeVector encodeString (declarationUniverses declaration)
     <> encodeVector encodeBinder (declarationModuleParameters declaration)
     <> encodeTermId (declarationType declaration)
-    <> encodeMaybe encodeTermId (declarationBody declaration)
+    <> encodeDeclarationDefinition (declarationDefinition declaration)
     <> encodeSet encodeCanonicalName (declarationDependencies declaration)
     <> encodeSet encodeFeature (declarationFeatures declaration)
     <> encodeSourceSpan (declarationSource declaration)
@@ -324,11 +348,171 @@ decodeDeclaration = do
     <*> decodeVector decodeString
     <*> decodeVector decodeBinder
     <*> decodeTermId
-    <*> decodeMaybe decodeTermId
+    <*> decodeDeclarationDefinition
     <*> decodeSet decodeCanonicalName
     <*> decodeSet decodeFeature
     <*> decodeSourceSpan
     <*> decodeMappingMode
+
+encodeCorePattern :: CorePattern -> Encoding
+encodeCorePattern = \case
+  PatternVariable binder ->
+    encodeListLen 2 <> encodeWord 0 <> encodeBinderId binder
+  PatternConstructor name patterns ->
+    encodeListLen 3
+      <> encodeWord 1
+      <> encodeCanonicalName name
+      <> encodeVector encodeCorePattern patterns
+  PatternBuiltin builtin patterns ->
+    encodeListLen 3
+      <> encodeWord 2
+      <> encodeBuiltinId builtin
+      <> encodeVector encodeCorePattern patterns
+  PatternLiteral kind value ->
+    encodeListLen 3 <> encodeWord 3 <> encodeString kind <> encodeString value
+  PatternWildcard -> encodeListLen 1 <> encodeWord 4
+
+decodeCorePattern :: Decoder s CorePattern
+decodeCorePattern = do
+  length' <- decodeListLen
+  tag <- decodeWord
+  case (tag, length') of
+    (0, 2) -> PatternVariable <$> decodeBinderId
+    (1, 3) -> PatternConstructor <$> decodeCanonicalName <*> decodeVector decodeCorePattern
+    (2, 3) -> PatternBuiltin <$> decodeBuiltinId <*> decodeVector decodeCorePattern
+    (3, 3) -> PatternLiteral <$> decodeString <*> decodeString
+    (4, 1) -> pure PatternWildcard
+    _ -> fail "invalid CorePattern encoding"
+
+encodeCoreClause :: CoreClause -> Encoding
+encodeCoreClause clause =
+  encodeListLen 3
+    <> encodeVector encodeBinder (clauseTelescope clause)
+    <> encodeVector encodeCorePattern (clausePatterns clause)
+    <> encodeTermId (clauseBody clause)
+
+decodeCoreClause :: Decoder s CoreClause
+decodeCoreClause = do
+  expectListLen 3
+  CoreClause
+    <$> decodeVector decodeBinder
+    <*> decodeVector decodeCorePattern
+    <*> decodeTermId
+
+encodeDataSchema :: DataSchema -> Encoding
+encodeDataSchema schema =
+  encodeListLen 2
+    <> encodeWord64 (dataParameterCount schema)
+    <> encodeVector encodeCanonicalName (dataConstructors schema)
+
+decodeDataSchema :: Decoder s DataSchema
+decodeDataSchema = do
+  expectListLen 2
+  DataSchema <$> decodeWord64 <*> decodeVector decodeCanonicalName
+
+encodeRecordField :: RecordField -> Encoding
+encodeRecordField field =
+  encodeListLen 2
+    <> encodeCanonicalName (recordFieldName field)
+    <> encodeBinder (recordFieldBinder field)
+
+decodeRecordField :: Decoder s RecordField
+decodeRecordField = do
+  expectListLen 2
+  RecordField <$> decodeCanonicalName <*> decodeBinder
+
+encodeRecordSchema :: RecordSchema -> Encoding
+encodeRecordSchema schema =
+  encodeListLen 3
+    <> encodeCanonicalName (recordConstructor schema)
+    <> encodeVector encodeBinder (recordParameters schema)
+    <> encodeVector encodeRecordField (recordFields schema)
+
+decodeRecordSchema :: Decoder s RecordSchema
+decodeRecordSchema = do
+  expectListLen 3
+  RecordSchema
+    <$> decodeCanonicalName
+    <*> decodeVector decodeBinder
+    <*> decodeVector decodeRecordField
+
+encodeConstructorSchema :: ConstructorSchema -> Encoding
+encodeConstructorSchema schema =
+  encodeListLen 2
+    <> encodeCanonicalName (constructorOwner schema)
+    <> encodeWord64 (constructorIndex schema)
+
+decodeConstructorSchema :: Decoder s ConstructorSchema
+decodeConstructorSchema = do
+  expectListLen 2
+  ConstructorSchema <$> decodeCanonicalName <*> decodeWord64
+
+encodeProjectionSchema :: ProjectionSchema -> Encoding
+encodeProjectionSchema schema =
+  encodeListLen 3
+    <> encodeCanonicalName (projectionRecord schema)
+    <> encodeCanonicalName (projectionField schema)
+    <> encodeWord64 (projectionIndex schema)
+
+decodeProjectionSchema :: Decoder s ProjectionSchema
+decodeProjectionSchema = do
+  expectListLen 3
+  ProjectionSchema
+    <$> decodeCanonicalName
+    <*> decodeCanonicalName
+    <*> decodeWord64
+
+encodeDefinitionObligation :: DefinitionObligation -> Encoding
+encodeDefinitionObligation = \case
+  UnsupportedDependentPattern description ->
+    encodeListLen 2 <> encodeWord 0 <> encodeString description
+  UnsupportedClauseBody description ->
+    encodeListLen 2 <> encodeWord 1 <> encodeString description
+  UnsupportedDefinitionKind description ->
+    encodeListLen 2 <> encodeWord 2 <> encodeString description
+
+decodeDefinitionObligation :: Decoder s DefinitionObligation
+decodeDefinitionObligation = do
+  length' <- decodeListLen
+  tag <- decodeWord
+  case (tag, length') of
+    (0, 2) -> UnsupportedDependentPattern <$> decodeString
+    (1, 2) -> UnsupportedClauseBody <$> decodeString
+    (2, 2) -> UnsupportedDefinitionKind <$> decodeString
+    _ -> fail "invalid DefinitionObligation encoding"
+
+encodeDeclarationDefinition :: DeclarationDefinition -> Encoding
+encodeDeclarationDefinition = \case
+  TermDefinition body ->
+    encodeListLen 2 <> encodeWord 0 <> encodeTermId body
+  ClauseDefinition clauses ->
+    encodeListLen 2 <> encodeWord 1 <> encodeVector encodeCoreClause clauses
+  DataDefinition schema ->
+    encodeListLen 2 <> encodeWord 2 <> encodeDataSchema schema
+  RecordDefinition schema ->
+    encodeListLen 2 <> encodeWord 3 <> encodeRecordSchema schema
+  ConstructorDefinition schema ->
+    encodeListLen 2 <> encodeWord 4 <> encodeConstructorSchema schema
+  ProjectionDefinition schema ->
+    encodeListLen 2 <> encodeWord 5 <> encodeProjectionSchema schema
+  AxiomDefinition -> encodeListLen 1 <> encodeWord 6
+  BlockedDefinition obligation ->
+    encodeListLen 2 <> encodeWord 7 <> encodeDefinitionObligation obligation
+
+decodeDeclarationDefinition :: Decoder s DeclarationDefinition
+decodeDeclarationDefinition = do
+  length' <- decodeListLen
+  tag <- decodeWord
+  case (tag, length') of
+    (0, 2) -> TermDefinition <$> decodeTermId
+    (1, 2) -> ClauseDefinition <$> decodeVector decodeCoreClause
+    (2, 2) -> DataDefinition <$> decodeDataSchema
+    (3, 2) -> RecordDefinition <$> decodeRecordSchema
+    (4, 2) -> ConstructorDefinition <$> decodeConstructorSchema
+    (5, 2) -> ProjectionDefinition <$> decodeProjectionSchema
+    (6, 1) -> pure AxiomDefinition
+    (7, 2) -> BlockedDefinition <$> decodeDefinitionObligation
+    _ -> fail "invalid DeclarationDefinition encoding"
 
 encodeBuiltinId :: BuiltinId -> Encoding
 encodeBuiltinId = encodeWord . fromIntegral . fromEnum

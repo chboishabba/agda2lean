@@ -11,6 +11,9 @@ import Data.List (find)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.IO as Text
+import qualified Data.Vector as Vector
+import Data.Word (Word16)
+import Text.Read (readMaybe)
 
 loadRegistryLayer :: RegistryScope -> FilePath -> IO RegistryLayer
 loadRegistryLayer expectedScope path = do
@@ -68,11 +71,12 @@ parseRegistryLayer contents = do
 parseMapping :: RegistryScope -> Text -> Either Text PlatformMapping
 parseMapping scope line =
   case Text.splitOn "\t" line of
-    [builtinText, auditName, target, rule, computationText, axiomEffectText, axiomDeltaText, kindText] -> do
+    [builtinText, auditName, target, rule, computationText, axiomEffectText, axiomDeltaText, kindText, argumentPolicyText] -> do
       builtin <- parseShown "BuiltinId" builtinText
       computation <- parseShown "computation treatment" computationText
       axiomEffect <- parseShown "axiom effect" axiomEffectText
       entityKind <- parseShown "builtin entity kind" kindText
+      argumentPolicy <- parseArgumentPolicy argumentPolicyText
       pure
         PlatformMapping
           { platformBuiltin = builtin
@@ -83,11 +87,12 @@ parseMapping scope line =
           , platformAxiomEffect = axiomEffect
           , platformAxiomDelta = parseAxiomDelta axiomDeltaText
           , platformEntityKind = entityKind
+          , platformArgumentPolicy = argumentPolicy
           , platformScope = scope
           }
     columns ->
       Left
-        ( "registry row must contain 8 tab-separated columns, found "
+        ( "registry row must contain 9 tab-separated columns, found "
             <> Text.pack (show (length columns))
             <> ": "
             <> line
@@ -99,7 +104,7 @@ renderRegistryLayer layer =
     ( [ "# registry-name\t" <> registryLayerName layer
       , "# registry-version\t" <> registryLayerVersion layer
       , "# registry-scope\t" <> Text.pack (show (registryLayerScope layer))
-      , "builtin-id\tagda-binding\tlean-target\trule\tcomputation\taxiom-effect\taxiom-delta\tentity-kind"
+      , "builtin-id\tagda-binding\tlean-target\trule\tcomputation\taxiom-effect\taxiom-delta\tentity-kind\targument-policy"
       ]
         <> map renderMapping (registryLayerMappings layer)
     )
@@ -115,7 +120,38 @@ renderRegistryLayer layer =
         , Text.pack (show (platformAxiomEffect mapping))
         , if null (platformAxiomDelta mapping) then "-" else Text.intercalate "," (platformAxiomDelta mapping)
         , Text.pack (show (platformEntityKind mapping))
+        , renderArgumentPolicy (platformArgumentPolicy mapping)
         ]
+
+renderArgumentPolicy :: ArgumentPolicy -> Text
+renderArgumentPolicy PreserveArguments = "preserve"
+renderArgumentPolicy (ProjectArguments arity order) =
+  "project:"
+    <> Text.pack (show arity)
+    <> ":"
+    <> Text.intercalate "," (map (Text.pack . show) (Vector.toList order))
+
+parseArgumentPolicy :: Text -> Either Text ArgumentPolicy
+parseArgumentPolicy "preserve" = Right PreserveArguments
+parseArgumentPolicy value =
+  case Text.splitOn ":" value of
+    ["project", arityText, orderText] -> do
+      arity <- parseWord16 "source arity" arityText
+      order <-
+        if Text.null orderText
+          then Right []
+          else traverse (parseWord16 "argument index") (Text.splitOn "," orderText)
+      if all (< arity) order
+        then Right (ProjectArguments arity (Vector.fromList order))
+        else Left ("argument policy index is outside source arity: " <> value)
+    _ -> Left ("invalid argument policy: " <> value)
+
+parseWord16 :: Text -> Text -> Either Text Word16
+parseWord16 label value =
+  maybe
+    (Left ("invalid " <> label <> ": " <> value))
+    Right
+    (readMaybe (Text.unpack value))
 
 parseAxiomDelta :: Text -> [Text]
 parseAxiomDelta value

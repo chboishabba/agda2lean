@@ -13,11 +13,11 @@ Agda elaborated binding
   -> semantic receipt
 ```
 
-The public registry label remains `lean4-platform-v1` for compatibility with codec-v3 receipts. The actual reviewed rule set is additionally bound by the canonical SHA-256 `platformRegistryDigest`; changing rule content changes the digest.
+The proof-aware registry is `lean4-platform-v2` and is paired with codec v4 and receipt schema v3. The actual reviewed rule set is additionally bound by the canonical SHA-256 `platformRegistryDigest`; changing rule content changes the digest.
 
 ## Agda extraction and target-policy boundary
 
-The Agda 2.9 backend is deliberately target-neutral. It queries Agda's active elaborated builtin environment, records canonical `BuiltinId` values in the IR, and writes codec-v3 CBOR. It does **not** load Lean registry files: doing so would couple source-language extraction to one target platform and would make the same CBOR non-portable.
+The Agda 2.9 backend is deliberately target-neutral. It queries Agda's active elaborated builtin environment, records canonical `BuiltinId` values in the IR, and writes codec-v4 CBOR. It does **not** load Lean registry files: doing so would couple source-language extraction to one target platform and would make the same CBOR non-portable.
 
 Registry files are loaded and validated at the production `emit-lean` boundary, where Lean policy is actually selected. Before any Lean or receipt output is written, `emitLeanModuleChecked` and the CLI:
 
@@ -49,8 +49,8 @@ The broader Agda 2.9 declaration universe is audited by `scripts/check-agda-buil
 For pinned Agda revision `7347b801ef73906219e5b10453c871ccc1e1c8ac`, the authoritative inventory is:
 
 - 315 upstream builtin/primitive constructors;
-- 19 registered semantic identities represented by the language-neutral IR and backend binding table;
-- 296 entries explicitly classified as `unsupported-or-unmapped` and outside the current translation contract.
+- 22 registered semantic identities represented by the language-neutral IR and backend binding table;
+- 293 entries explicitly classified as `unsupported-or-unmapped` and outside the current translation contract.
 
 The earlier 313/18/295 report omitted the first constructor of each upstream enum and is superseded.
 

@@ -51,10 +51,9 @@ ensureRegistryCoverage options moduleIR =
       , Map.notMember builtin (emitRegistry options)
       ]
 
--- The low-level term renderer currently obtains the native platform target
--- directly. Checked emission proves that this cannot bypass an injected
--- effective registry: every term-level builtin must resolve to the same target
--- in both views before rendering starts.
+-- Platform rules are protected against semantic retargeting. Checked emission
+-- verifies that an injected layered registry still agrees with the audited
+-- platform target for every term-level builtin before rendering starts.
 ensureRendererConsistency :: EmitOptions -> ModuleIR -> Either Text ()
 ensureRendererConsistency options moduleIR =
   case divergent of
@@ -67,14 +66,17 @@ ensureRendererConsistency options moduleIR =
   where
     divergent =
       [ builtin
-      | builtin <- Set.toAscList (termBuiltins moduleIR)
+      | builtin <- Set.toAscList (termBuiltins moduleIR <> definitionBuiltins moduleIR)
       , effectiveTarget builtin /= platformTargetFor builtin
       ]
     effectiveTarget builtin = platformTarget <$> Map.lookup builtin (emitRegistry options)
     platformTargetFor builtin = platformTarget <$> lookupPlatformMapping builtin
 
 encounteredBuiltins :: ModuleIR -> Set.Set BuiltinId
-encounteredBuiltins moduleIR = declarationBuiltins moduleIR <> termBuiltins moduleIR
+encounteredBuiltins moduleIR =
+  declarationBuiltins moduleIR
+    <> termBuiltins moduleIR
+    <> definitionBuiltins moduleIR
 
 declarationBuiltins :: ModuleIR -> Set.Set BuiltinId
 declarationBuiltins moduleIR =
@@ -90,6 +92,29 @@ termBuiltins moduleIR =
     [ builtin
     | Builtin builtin <- Map.elems (moduleTerms moduleIR)
     ]
+
+definitionBuiltins :: ModuleIR -> Set.Set BuiltinId
+definitionBuiltins moduleIR =
+  foldMap
+    (definitionPatternBuiltins . declarationDefinition)
+    (moduleDeclarations moduleIR)
+
+definitionPatternBuiltins :: DeclarationDefinition -> Set.Set BuiltinId
+definitionPatternBuiltins definition =
+  case definition of
+    ClauseDefinition clauses ->
+      foldMap (foldMap patternBuiltins . clausePatterns) clauses
+    _ -> Set.empty
+
+patternBuiltins :: CorePattern -> Set.Set BuiltinId
+patternBuiltins pattern' =
+  case pattern' of
+    PatternVariable _ -> Set.empty
+    PatternConstructor _ children -> foldMap patternBuiltins children
+    PatternBuiltin builtin children ->
+      Set.insert builtin (foldMap patternBuiltins children)
+    PatternLiteral _ _ -> Set.empty
+    PatternWildcard -> Set.empty
 
 ensureReceiptCompleteness :: ModuleIR -> LeanOutput -> Either Text ()
 ensureReceiptCompleteness moduleIR output

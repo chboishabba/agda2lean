@@ -30,6 +30,8 @@ jobs:
       - run: cabal update
       - run: cabal build all --enable-tests
       - run: cabal test all --test-show-details=direct
+      - name: Test deterministic project planning
+        run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -v test/test_a2l_project.py
 
   agda-backend:
     runs-on: ubuntu-latest
@@ -52,6 +54,9 @@ jobs:
             ${{ runner.os }}-agda-2.9-7347b801-ghc-9.6.7-
       - run: cabal update
       - run: cabal --project-file=cabal.project.agda-2.9 build -fagda-backend agda2lean-agda
+      - uses: leanprover/lean-action@v1
+        with:
+          auto-config: false
       - name: Extract a typechecked Agda fixture
         run: |
           cabal --project-file=cabal.project.agda-2.9 run -fagda-backend agda2lean-agda -- \
@@ -69,8 +74,11 @@ jobs:
           cabal --project-file=cabal.project.agda-2.9 run agda2lean -- emit-lean \
             --input build/agda-ir/LocalRewrite/module.a2l.cbor \
             --lean-output build/agda-ir/LocalRewrite.lean \
-            --diagnostics build/agda-ir/LocalRewrite.diagnostics.tsv
+            --diagnostics build/agda-ir/LocalRewrite.diagnostics.tsv \
+            --allow-reconstruction
           grep -q -- "-- Mapping: Reconstruct" build/agda-ir/LocalRewrite.lean
+      - name: Generate, build, and audit JFixedPoint
+        run: bash scripts/check-jfixedpoint.sh
 
   dashi-mirror-smoke:
     runs-on: ubuntu-latest

@@ -24,6 +24,7 @@ main =
         , compositionTests
         , registryFileTests
         , checkedEmissionTests
+        , semanticLoweringTests
         , determinismTests
         ]
     )
@@ -160,8 +161,8 @@ registryFileTests =
         [ "# registry-name\tinvalid"
         , "# registry-version\t1"
         , "# registry-scope\tLibraryScope"
-        , "builtin-id\tagda-binding\tlean-target\trule\tcomputation\taxiom-effect\taxiom-delta\tentity-kind"
-        , "BuiltinDoesNotExist\tX\tX\texact\tNativeDefinitional\tNoAxioms\t-\tBuiltinFunction"
+        , "builtin-id\tagda-binding\tlean-target\trule\tcomputation\taxiom-effect\taxiom-delta\tentity-kind\targument-policy"
+        , "BuiltinDoesNotExist\tX\tX\texact\tNativeDefinitional\tNoAxioms\t-\tBuiltinFunction\tpreserve"
         ]
 
 checkedEmissionTests :: TestTree
@@ -211,6 +212,135 @@ checkedEmissionTests =
                 Right _ -> assertFailure "divergent effective target bypassed checked emission"
     ]
 
+semanticLoweringTests :: TestTree
+semanticLoweringTests =
+  testGroup
+    "semantic lowering"
+    [ testCase "List family has complete native mappings" $ do
+        platformTarget (platformMappings Map.! BuiltinList) @?= "List"
+        platformTarget (platformMappings Map.! BuiltinListNil) @?= "List.nil"
+        platformTarget (platformMappings Map.! BuiltinListCons) @?= "List.cons"
+        platformArgumentPolicy (platformMappings Map.! BuiltinList)
+          @?= ProjectArguments 2 (Vector.singleton 1)
+        platformArgumentPolicy (platformMappings Map.! BuiltinListCons)
+          @?= ProjectArguments 4 (Vector.fromList [1, 2, 3])
+    , testCase "erases Agda's hidden List level and retains its element type" $ do
+        let output = emitLeanModule defaultEmitOptions listApplicationModule
+        assertBool
+          "List application did not project the hidden source spine"
+          ("(@List Nat)" `Text.isInfixOf` leanSource output)
+        assertBool
+          "erased level leaked into the Lean application"
+          (not ("@List 0 Nat" `Text.isInfixOf` leanSource output))
+    , testCase "renders structured first-class level expressions" $ do
+        let output = emitLeanModule defaultEmitOptions levelExpressionModule
+        assertBool
+          "level maximum/successor was not rendered as universe syntax"
+          ("(max 0 (0 + 1))" `Text.isInfixOf` leanSource output)
+    , testCase "projects Eq.refl's level argument and preserves hidden arguments" $ do
+        let output = emitLeanModule defaultEmitOptions reflApplicationModule
+        assertBool
+          "Eq.refl source spine was not projected"
+          ("(@Eq.refl Nat x)" `Text.isInfixOf` leanSource output)
+        assertBool
+          "proposition-shaped function was not emitted as a theorem"
+          ("theorem proof" `Text.isInfixOf` leanSource output)
+    , testCase "under-applied argument policies fail closed" $ do
+        let output = emitLeanModule defaultEmitOptions underAppliedListModule
+        assertBool
+          "under-application diagnostic missing"
+          (any ((== Error) . diagnosticSeverity) (Vector.toList (leanDiagnostics output)))
+        assertBool "under-applied builtin was not blocked" ("-- BLOCKED" `Text.isInfixOf` leanSource output)
+        assertBool "default emission introduced sorry" (not ("sorry" `Text.isInfixOf` leanSource output))
+    ]
+
+listApplicationModule :: ModuleIR
+listApplicationModule =
+  simpleTermModule
+    "Example.ListApplication"
+    (Map.fromList
+      [ (TermId 0, Builtin BuiltinList)
+      , (TermId 1, Level LevelZero)
+      , (TermId 2, Builtin BuiltinNat)
+      , (TermId 3, App (TermId 0) (Argument Implicit Relevant (TermId 1)))
+      , (TermId 4, App (TermId 3) (Argument Implicit Relevant (TermId 2)))
+      ])
+    (TermId 4)
+    AxiomDefinition
+
+underAppliedListModule :: ModuleIR
+underAppliedListModule =
+  simpleTermModule
+    "Example.UnderAppliedList"
+    (Map.fromList
+      [ (TermId 0, Builtin BuiltinList)
+      , (TermId 1, Level LevelZero)
+      , (TermId 2, App (TermId 0) (Argument Implicit Relevant (TermId 1)))
+      ])
+    (TermId 2)
+    AxiomDefinition
+
+levelExpressionModule :: ModuleIR
+levelExpressionModule =
+  simpleTermModule
+    "Example.LevelExpression"
+    (Map.singleton
+      (TermId 0)
+      (Level (LevelMaximum (Vector.fromList [LevelZero, LevelSuccessor LevelZero]))))
+    (TermId 0)
+    AxiomDefinition
+
+reflApplicationModule :: ModuleIR
+reflApplicationModule =
+  simpleTermModule
+    "Example.ReflApplication"
+    terms
+    (TermId 4)
+    (TermDefinition (TermId 10))
+  where
+    binder = Binder (BinderId 0) "x" (TermId 0) Explicit Relevant
+    terms =
+      Map.fromList
+        [ (TermId 0, Builtin BuiltinNat)
+        , (TermId 1, Var (BinderId 0))
+        , (TermId 2, Equality (TermId 0) (TermId 1) (TermId 1))
+        , (TermId 3, Pi binder (TermId 2))
+        , (TermId 4, Pi binder (TermId 2))
+        , (TermId 5, Builtin BuiltinRefl)
+        , (TermId 6, Level LevelZero)
+        , (TermId 7, App (TermId 5) (Argument Implicit Relevant (TermId 6)))
+        , (TermId 8, App (TermId 7) (Argument Implicit Relevant (TermId 0)))
+        , (TermId 9, App (TermId 8) (Argument Implicit Relevant (TermId 1)))
+        , (TermId 10, Lam binder (TermId 9))
+        ]
+
+simpleTermModule :: Text.Text -> Map.Map TermId CoreTerm -> TermId -> DeclarationDefinition -> ModuleIR
+simpleTermModule moduleText terms typeId definition =
+  ModuleIR
+    { moduleSchemaVersion = currentSchemaVersion
+    , moduleName = CanonicalName moduleText
+    , moduleImports = Set.empty
+    , moduleTerms = terms
+    , moduleDeclarations =
+        Vector.singleton
+          CoreDeclaration
+            { declarationName = CanonicalName (moduleText <> ".proof")
+            , declarationBuiltin = Nothing
+            , declarationRole =
+                case definition of
+                  AxiomDefinition -> AxiomDeclaration
+                  _ -> ComputationalFunction
+            , declarationUniverses = Vector.empty
+            , declarationModuleParameters = Vector.empty
+            , declarationType = typeId
+            , declarationDefinition = definition
+            , declarationDependencies = Set.empty
+            , declarationFeatures = Set.empty
+            , declarationSource = SourceSpan "fixture.agda" 1 1
+            , declarationMapping = Exact
+            }
+    }
+
 builtinNatDeclarationModule :: ModuleIR
 builtinNatDeclarationModule =
   ModuleIR
@@ -227,7 +357,7 @@ builtinNatDeclarationModule =
             , declarationUniverses = Vector.empty
             , declarationModuleParameters = Vector.empty
             , declarationType = TermId 0
-            , declarationBody = Nothing
+            , declarationDefinition = AxiomDefinition
             , declarationDependencies = Set.empty
             , declarationFeatures = Set.empty
             , declarationSource = SourceSpan "Agda/Builtin/Nat.agda" 1 1
@@ -251,7 +381,7 @@ builtinNatTermModule =
             , declarationUniverses = Vector.empty
             , declarationModuleParameters = Vector.empty
             , declarationType = TermId 0
-            , declarationBody = Nothing
+            , declarationDefinition = AxiomDefinition
             , declarationDependencies = Set.empty
             , declarationFeatures = Set.empty
             , declarationSource = SourceSpan "Example/BuiltinTerm.agda" 1 1

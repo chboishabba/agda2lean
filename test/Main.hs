@@ -56,7 +56,7 @@ codecTests =
     , testCase "semantic hash follows canonical bytes" $
         moduleObjectHash exampleModuleReordered
           @?= moduleObjectHash exampleModule
-    , testCase "semantic hash matches the codec-v3 golden object" $
+    , testCase "semantic hash matches the codec-v4 golden object" $
         renderObjectHash (moduleObjectHash exampleModule)
           @?= "7eeb8aba83ae0e642977926cd6c38ad9ffd9820ed01bdf72bb88a0314f375fd3"
     , testCase "rejects trailing bytes" $
@@ -94,7 +94,7 @@ extractionTests =
                 { agdaModuleDeclarations =
                     Vector.singleton
                       declaration
-                        { agdaDeclarationBody = Nothing
+                        { agdaDeclarationDefinition = AgdaAxiomDefinition
                         , agdaDeclarationAdditionalDependencies =
                             Set.singleton helper
                         }
@@ -116,13 +116,94 @@ extractionTests =
                 { agdaModuleDeclarations =
                     Vector.singleton
                       declaration
-                        { agdaDeclarationBody = Just (AgdaVar 3 Vector.empty)
+                        { agdaDeclarationDefinition = AgdaTermDefinition (AgdaVar 3 Vector.empty)
                         }
                 }
          in case extractModule invalid of
               Left UnboundDeBruijnIndex {} -> pure ()
               Left issue -> assertFailure ("unexpected error: " <> show issue)
               Right _ -> assertFailure "unbound de Bruijn variable was accepted"
+    , testCase "extracts records and builtin structural clauses" $
+        case extractModule structuralSnapshot of
+          Left issue -> assertFailure (show issue)
+          Right moduleIR -> do
+            let declarations = Vector.toList (moduleDeclarations moduleIR)
+                observation = declarations !! 0
+                predecessor = declarations !! 1
+            case declarationDefinition observation of
+              RecordDefinition schema -> do
+                recordConstructor schema
+                  @?= CanonicalName "DASHI.Example.Structural.Observation.constructor"
+                Vector.length (recordFields schema) @?= 1
+              definition -> assertFailure ("expected record definition, got " <> show definition)
+            case declarationDefinition predecessor of
+              ClauseDefinition clauses -> do
+                Vector.length clauses @?= 2
+                clausePatterns (clauses Vector.! 0)
+                  @?= Vector.singleton (PatternBuiltin BuiltinNatZero Vector.empty)
+                case Vector.toList (clausePatterns (clauses Vector.! 1)) of
+                  [PatternBuiltin BuiltinNatSuc children] ->
+                    Vector.length children @?= 1
+                  patterns -> assertFailure ("unexpected successor patterns: " <> show patterns)
+              definition -> assertFailure ("expected clause definition, got " <> show definition)
+            declarationDefinition (moduleDeclarations moduleIR Vector.! 4)
+              @?= ConstructorDefinition
+                ConstructorSchema
+                  { constructorOwner =
+                      CanonicalName "DASHI.Example.Structural.Observation"
+                  , constructorIndex = 0
+                  }
+            declarationDefinition (moduleDeclarations moduleIR Vector.! 5)
+              @?= ProjectionDefinition
+                ProjectionSchema
+                  { projectionRecord =
+                      CanonicalName "DASHI.Example.Structural.Observation"
+                  , projectionField =
+                      CanonicalName "DASHI.Example.Structural.Observation.value"
+                  , projectionIndex = 0
+                  }
+    , testCase "preserves builtin constructor application arguments" $
+        case extractModule structuralSnapshot of
+          Left issue -> assertFailure (show issue)
+          Right moduleIR -> do
+            let one = moduleDeclarations moduleIR Vector.! 2
+            case declarationDefinition one of
+              TermDefinition body ->
+                case Map.lookup body (moduleTerms moduleIR) of
+                  Just (App function argument) -> do
+                    Map.lookup function (moduleTerms moduleIR)
+                      @?= Just (Builtin BuiltinNatSuc)
+                    Map.lookup (argumentTerm argument) (moduleTerms moduleIR)
+                      @?= Just (Builtin BuiltinNatZero)
+                  term -> assertFailure ("expected applied successor, got " <> show term)
+              definition -> assertFailure ("expected term definition, got " <> show definition)
+    , testCase "turns unsupported dependent matching into a typed blocked obligation" $
+        case extractModule structuralSnapshot of
+          Left issue -> assertFailure (show issue)
+          Right moduleIR -> do
+            let blocked = moduleDeclarations moduleIR Vector.! 3
+            declarationMapping blocked @?= Unsupported
+            declarationDefinition blocked
+              @?= BlockedDefinition
+                (UnsupportedDependentPattern "dot/forced patterns require motive reconstruction")
+    , testCase "reifies first-class lzero instead of an unsafe universe primitive" $
+        let declaration = Vector.head (agdaModuleDeclarations identitySnapshot)
+            levelSnapshot =
+              identitySnapshot
+                { agdaModuleDeclarations =
+                    Vector.singleton
+                      declaration
+                        { agdaDeclarationDefinition =
+                            AgdaTermDefinition (AgdaLevel AgdaLevelZero)
+                        }
+                }
+         in case extractModule levelSnapshot of
+              Left issue -> assertFailure (show issue)
+              Right moduleIR ->
+                case declarationDefinition (Vector.head (moduleDeclarations moduleIR)) of
+                  TermDefinition body ->
+                    Map.lookup body (moduleTerms moduleIR) @?= Just (Level LevelZero)
+                  definition -> assertFailure ("expected level term, got " <> show definition)
     ]
 
 leanEmitterTests :: TestTree
@@ -163,7 +244,7 @@ leanEmitterTests =
         Vector.length receipts @?= 2
         builtinReceiptAgdaBinding equalityReceipt
           @?= "Agda.Builtin.Equality._≡_"
-        builtinReceiptRegistryVersion equalityReceipt @?= "lean4-platform-v1"
+        builtinReceiptRegistryVersion equalityReceipt @?= "lean4-platform-v2"
         builtinReceiptRule equalityReceipt @?= Just "ordinary-equality"
         builtinReceiptLeanTarget equalityReceipt @?= Just "Eq"
         builtinReceiptComputation equalityReceipt @?= Just TheoremBacked
@@ -224,7 +305,10 @@ leanEmitterTests =
         case extractModule reconstructSnapshot of
           Left issue -> assertFailure (show issue)
           Right moduleIR -> do
-            let output = emitLeanModule defaultEmitOptions moduleIR
+            let output =
+                  emitLeanModule
+                    defaultEmitOptions {emitSorryBodies = True}
+                    moduleIR
             assertBool "reconstruction body lacks sorry" ("sorry" `Text.isInfixOf` leanSource output)
             assertBool
               "reconstruction diagnostic missing"
@@ -236,10 +320,7 @@ leanEmitterTests =
         case extractModule reconstructSnapshot of
           Left issue -> assertFailure (show issue)
           Right moduleIR -> do
-            let output =
-                  emitLeanModule
-                    defaultEmitOptions {emitSorryBodies = False}
-                    moduleIR
+            let output = emitLeanModule defaultEmitOptions moduleIR
             assertBool
               "fail-closed diagnostic missing"
               ( Vector.any
@@ -277,7 +358,7 @@ builtinEqualityModule =
               , declarationUniverses = Vector.empty
               , declarationModuleParameters = Vector.empty
               , declarationType = TermId 0
-              , declarationBody = Nothing
+              , declarationDefinition = AxiomDefinition
               , declarationDependencies = Set.empty
               , declarationFeatures = Set.empty
               , declarationSource = SourceSpan "Agda/Builtin/Equality.agda" 1 1
@@ -290,7 +371,7 @@ builtinEqualityModule =
               , declarationUniverses = Vector.empty
               , declarationModuleParameters = Vector.empty
               , declarationType = TermId 0
-              , declarationBody = Nothing
+              , declarationDefinition = AxiomDefinition
               , declarationDependencies = Set.empty
               , declarationFeatures = Set.empty
               , declarationSource = SourceSpan "Agda/Builtin/Equality.agda" 2 2
@@ -361,7 +442,7 @@ classificationTests =
             declaration =
               (Vector.head (moduleDeclarations exampleModule))
                 { declarationType = cubicalTermId
-                , declarationBody = Nothing
+                , declarationDefinition = AxiomDefinition
                 }
             cubicalModule =
               exampleModule

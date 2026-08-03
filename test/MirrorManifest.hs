@@ -21,7 +21,7 @@ mirrorManifestTests =
           Right manifest -> do
             manifestSchemaVersion manifest @?= 1
             map fixtureId (manifestFixtures manifest)
-              @?= map FixtureId ["moonshine", "crtj-fixed-point", "constraint-closure"]
+              @?= map FixtureId ["moonshine", "jfixed-point", "crtj-fixed-point", "constraint-closure"]
     , testCase "parses a pinned CRTJ fixture" $
         case parseMirrorManifest validManifest of
           Left issue -> assertFailure (Text.unpack (renderManifestError issue))

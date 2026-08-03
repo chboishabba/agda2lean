@@ -44,14 +44,19 @@ classifyDeclaration moduleIR declaration =
     { classificationMode =
         stricterMode
           (declarationMapping declaration)
-          (requiredMode inferredFeatures)
+          ( stricterMode
+              (requiredMode inferredFeatures)
+              (definitionMode (declarationDefinition declaration))
+          )
     , classificationFeatures = inferredFeatures
-    , classificationReasons = reasons inferredFeatures
+    , classificationReasons =
+        reasons inferredFeatures
+          <> definitionReasons (declarationDefinition declaration)
     }
   where
     roots =
       declarationType declaration
-        : ( maybe [] pure (declarationBody declaration)
+        : ( definitionRoots (declarationDefinition declaration)
               <> map
                 binderType
                 (Vector.toList (declarationModuleParameters declaration))
@@ -60,6 +65,45 @@ classifyDeclaration moduleIR declaration =
     inferredFeatures =
       declarationFeatures declaration
         <> foldMap termFeatures reachable
+
+definitionRoots :: DeclarationDefinition -> [TermId]
+definitionRoots definition =
+  case definition of
+    TermDefinition body -> [body]
+    ClauseDefinition clauses ->
+      concat
+        [ clauseBody clause
+            : map binderType (Vector.toList (clauseTelescope clause))
+        | clause <- Vector.toList clauses
+        ]
+    DataDefinition _ -> []
+    RecordDefinition schema ->
+      map binderType (Vector.toList (recordParameters schema))
+        <> map (binderType . recordFieldBinder) (Vector.toList (recordFields schema))
+    ConstructorDefinition _ -> []
+    ProjectionDefinition _ -> []
+    AxiomDefinition -> []
+    BlockedDefinition _ -> []
+
+definitionMode :: DeclarationDefinition -> MappingMode
+definitionMode definition =
+  case definition of
+    BlockedDefinition _ -> Unsupported
+    _ -> Exact
+
+definitionReasons :: DeclarationDefinition -> Vector.Vector Text
+definitionReasons definition =
+  case definition of
+    BlockedDefinition obligation ->
+      Vector.singleton
+        ("definition is outside the portable fragment: " <> renderObligation obligation)
+    _ -> Vector.empty
+  where
+    renderObligation obligation =
+      case obligation of
+        UnsupportedDependentPattern message -> message
+        UnsupportedClauseBody message -> message
+        UnsupportedDefinitionKind message -> message
 
 stricterMode :: MappingMode -> MappingMode -> MappingMode
 stricterMode left right

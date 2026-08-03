@@ -9,13 +9,23 @@ module Agda2Lean.IR
   , BinderId (..)
   , BuiltinId (..)
   , CanonicalName (..)
+  , CoreClause (..)
   , CoreDeclaration (..)
+  , CorePattern (..)
   , CoreTerm (..)
+  , ConstructorSchema (..)
+  , DataSchema (..)
+  , DeclarationDefinition (..)
   , DeclarationRole (..)
+  , DefinitionObligation (..)
   , ExtensionTerm (..)
   , Feature (..)
+  , LevelExpr (..)
   , MappingMode (..)
   , ModuleIR (..)
+  , RecordField (..)
+  , RecordSchema (..)
+  , ProjectionSchema (..)
   , Relevance (..)
   , SchemaVersion (..)
   , SourceSpan (..)
@@ -43,7 +53,7 @@ newtype SchemaVersion = SchemaVersion {unSchemaVersion :: Word16}
   deriving stock (Eq, Ord, Show, Generic)
 
 currentSchemaVersion :: SchemaVersion
-currentSchemaVersion = SchemaVersion 2
+currentSchemaVersion = SchemaVersion 3
 
 newtype CanonicalName = CanonicalName {unCanonicalName :: Text}
   deriving stock (Eq, Ord, Show, Generic)
@@ -62,6 +72,9 @@ data BuiltinId
   | BuiltinBool
   | BuiltinBoolTrue
   | BuiltinBoolFalse
+  | BuiltinList
+  | BuiltinListNil
+  | BuiltinListCons
   | BuiltinEquality
   | BuiltinRefl
   | BuiltinLevel
@@ -98,6 +111,18 @@ data Universe
   | USSet Universe
   deriving stock (Eq, Ord, Show, Generic)
 
+-- | A first-class universe-level expression.  This is deliberately separate
+-- from 'Universe': a 'Universe' classifies a sort, while a 'LevelExpr' may
+-- occur as an ordinary (usually hidden) argument in elaborated Agda terms.
+-- Keeping it structured allows a target to erase such arguments or reify
+-- them as universe syntax without treating @lzero@ as an unsafe primitive.
+data LevelExpr
+  = LevelZero
+  | LevelSuccessor LevelExpr
+  | LevelMaximum (Vector LevelExpr)
+  | LevelVariable BinderId
+  deriving stock (Eq, Ord, Show, Generic)
+
 data Binder = Binder
   { binderId :: BinderId
   , binderName :: Text
@@ -127,6 +152,7 @@ data ExtensionTerm
 data CoreTerm
   = Var BinderId
   | Sort Universe
+  | Level LevelExpr
   | Pi Binder TermId
   | Sigma Binder TermId
   | Lam Binder TermId
@@ -137,6 +163,75 @@ data CoreTerm
   | Axiom CanonicalName
   | Builtin BuiltinId
   | Extension ExtensionTerm
+  deriving stock (Eq, Ord, Show, Generic)
+
+data CorePattern
+  = PatternVariable BinderId
+  | PatternConstructor CanonicalName (Vector CorePattern)
+  | PatternBuiltin BuiltinId (Vector CorePattern)
+  | PatternLiteral Text Text
+  | PatternWildcard
+  deriving stock (Eq, Ord, Show, Generic)
+
+data CoreClause = CoreClause
+  { clauseTelescope :: Vector Binder
+  , clausePatterns :: Vector CorePattern
+  , clauseBody :: TermId
+  }
+  deriving stock (Eq, Ord, Show, Generic)
+
+data DataSchema = DataSchema
+  { dataParameterCount :: Word64
+  , dataConstructors :: Vector CanonicalName
+  }
+  deriving stock (Eq, Ord, Show, Generic)
+
+data RecordField = RecordField
+  { recordFieldName :: CanonicalName
+  , recordFieldBinder :: Binder
+  }
+  deriving stock (Eq, Ord, Show, Generic)
+
+data RecordSchema = RecordSchema
+  { recordConstructor :: CanonicalName
+  , recordParameters :: Vector Binder
+  , recordFields :: Vector RecordField
+  }
+  deriving stock (Eq, Ord, Show, Generic)
+
+data ConstructorSchema = ConstructorSchema
+  { constructorOwner :: CanonicalName
+  , constructorIndex :: Word64
+  }
+  deriving stock (Eq, Ord, Show, Generic)
+
+data ProjectionSchema = ProjectionSchema
+  { projectionRecord :: CanonicalName
+  , projectionField :: CanonicalName
+  , projectionIndex :: Word64
+  }
+  deriving stock (Eq, Ord, Show, Generic)
+
+data DefinitionObligation
+  = UnsupportedDependentPattern Text
+  | UnsupportedClauseBody Text
+  | UnsupportedDefinitionKind Text
+  deriving stock (Eq, Ord, Show, Generic)
+
+-- | The single source of truth for a declaration's implementation.  Terms
+-- cover ordinary bodies; clauses preserve structural pattern matching; data
+-- and record schemas retain information that cannot be reconstructed from a
+-- type alone.  Unsupported definitions carry an explicit fail-closed
+-- obligation instead of silently degrading to an axiom.
+data DeclarationDefinition
+  = TermDefinition TermId
+  | ClauseDefinition (Vector CoreClause)
+  | DataDefinition DataSchema
+  | RecordDefinition RecordSchema
+  | ConstructorDefinition ConstructorSchema
+  | ProjectionDefinition ProjectionSchema
+  | AxiomDefinition
+  | BlockedDefinition DefinitionObligation
   deriving stock (Eq, Ord, Show, Generic)
 
 data DeclarationRole
@@ -182,7 +277,7 @@ data CoreDeclaration = CoreDeclaration
   , declarationUniverses :: Vector Text
   , declarationModuleParameters :: Vector Binder
   , declarationType :: TermId
-  , declarationBody :: Maybe TermId
+  , declarationDefinition :: DeclarationDefinition
   , declarationDependencies :: Set CanonicalName
   , declarationFeatures :: Set Feature
   , declarationSource :: SourceSpan
@@ -260,10 +355,12 @@ validateModule ir
                <> unCanonicalName (declarationName declaration)
            | not (termExists (declarationType declaration))
            ]
-        <> [ "missing body term for "
+        <> [ "definition of "
                <> unCanonicalName (declarationName declaration)
-           | Just body <- [declarationBody declaration]
-           , not (termExists body)
+               <> " references missing term "
+               <> showText referenced
+           | referenced <- Set.toAscList (definitionReferences (declarationDefinition declaration))
+           , not (termExists referenced)
            ]
         <> [ "module parameter "
                <> binderName binder
@@ -280,11 +377,55 @@ validateModule ir
            , sourceStartLine span' == 0
                || sourceEndLine span' < sourceStartLine span'
            ]
-        <> [ "unsupported declarations must not carry a proof body: "
+        <> [ "unsupported declarations must carry a blocked obligation or explicit axiom boundary: "
                <> unCanonicalName (declarationName declaration)
            | declarationMapping declaration == Unsupported
-           , declarationBody declaration /= Nothing
+           , case declarationDefinition declaration of
+               AxiomDefinition -> False
+               BlockedDefinition _ -> False
+               _ -> True
            ]
+        <> validateDefinition declaration
+
+    validateDefinition declaration =
+      case declarationDefinition declaration of
+        ClauseDefinition clauses -> concatMap validateClause (Vector.toList clauses)
+        RecordDefinition schema -> validateRecord schema
+        _ -> []
+      where
+        owner = unCanonicalName (declarationName declaration)
+        validateClause clause =
+          [ "duplicate clause binder in " <> owner <> ": " <> showText duplicate
+          | duplicate <- duplicateBinderIds (Vector.toList (clauseTelescope clause))
+          ]
+            <> [ "unbound pattern binder in " <> owner <> ": " <> showText binder
+               | binder <- Set.toAscList (foldMap patternBinders (Vector.toList (clausePatterns clause)))
+               , binder `Set.notMember` telescopeBinders
+               ]
+          where
+            telescopeBinders = Set.fromList (map binderId (Vector.toList (clauseTelescope clause)))
+        validateRecord schema =
+          [ "duplicate record binder in " <> owner <> ": " <> showText duplicate
+          | duplicate <- duplicateBinderIds allBinders
+          ]
+          where
+            allBinders =
+              Vector.toList (recordParameters schema)
+                <> map recordFieldBinder (Vector.toList (recordFields schema))
+
+    duplicateBinderIds binders =
+      [ binder
+      | duplicateGroup@(binder : _) <- group (sort (map binderId binders))
+      , length duplicateGroup > 1
+      ]
+
+    patternBinders pattern' =
+      case pattern' of
+        PatternVariable binder -> Set.singleton binder
+        PatternConstructor _ patterns -> foldMap patternBinders patterns
+        PatternBuiltin _ patterns -> foldMap patternBinders patterns
+        PatternLiteral _ _ -> Set.empty
+        PatternWildcard -> Set.empty
 
     declarationBelongsToModule declaration =
       let modulePrefix = unCanonicalName (moduleName ir) <> "."
@@ -303,6 +444,7 @@ termReferences term =
   case term of
     Var _ -> Set.empty
     Sort _ -> Set.empty
+    Level _ -> Set.empty
     Pi binder body -> Set.fromList [binderType binder, body]
     Sigma binder body -> Set.fromList [binderType binder, body]
     Lam binder body -> Set.fromList [binderType binder, body]
@@ -322,6 +464,29 @@ termReferences term =
   where
     argumentReferences =
       Set.fromList . map argumentTerm . Vector.toList
+
+definitionReferences :: DeclarationDefinition -> Set TermId
+definitionReferences definition =
+  case definition of
+    TermDefinition body -> Set.singleton body
+    ClauseDefinition clauses ->
+      Set.fromList
+        [ reference
+        | clause <- Vector.toList clauses
+        , reference <-
+            clauseBody clause
+              : map binderType (Vector.toList (clauseTelescope clause))
+        ]
+    DataDefinition _ -> Set.empty
+    RecordDefinition schema ->
+      Set.fromList
+        ( map binderType (Vector.toList (recordParameters schema))
+            <> map (binderType . recordFieldBinder) (Vector.toList (recordFields schema))
+        )
+    ConstructorDefinition _ -> Set.empty
+    ProjectionDefinition _ -> Set.empty
+    AxiomDefinition -> Set.empty
+    BlockedDefinition _ -> Set.empty
 
 showText :: Show a => a -> Text
 showText = Text.pack . show
