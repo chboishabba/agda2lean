@@ -4,6 +4,7 @@ import sys
 import tempfile
 import textwrap
 import unittest
+from unittest import mock
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -171,6 +172,75 @@ class ProjectPlanTests(unittest.TestCase):
                 (first / ".agda2lean/files.sha256").read_bytes(),
                 (second / ".agda2lean/files.sha256").read_bytes(),
             )
+
+    def test_bulk_catalog_manifest_uses_hermetic_checked_source_hash(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            source = root / "source"
+            source.mkdir()
+            original = self.write(source, "Root", "value : Set\nvalue = Set\n")
+
+            modules = A2L.discover_modules((source,))
+            plan = A2L.make_plan(
+                modules,
+                ("Root",),
+                A2L.DEFAULT_PLATFORM_PREFIXES,
+                (),
+            )
+            cache = A2L.prepare_cache(
+                plan,
+                root / "cache",
+                "toolchain",
+                A2L.source_fingerprint(plan),
+            )
+            ir = A2L.module_ir_path(cache / "ir", "Root")
+            ir.parent.mkdir(parents=True, exist_ok=True)
+            ir.write_bytes(b"fake-ir")
+
+            cached_source = cache / "source" / "Root.agda"
+            expected_hash = A2L.file_sha256(cached_source)
+
+            # Mutate the worktree after the hermetic source tree has been
+            # prepared. Catalog provenance must still describe what Agda saw.
+            original.write_text(
+                "module Root where\nvalue : Set\nvalue = (λ A → A) Set\n",
+                encoding="utf-8",
+            )
+
+            with mock.patch.object(A2L, "run_logged") as run_logged:
+                A2L.populate_catalog(
+                    plan,
+                    cache,
+                    root / "agda2lean",
+                    root / "semantic.sqlite",
+                )
+
+            manifest = cache / "catalog-manifest.tsv"
+            rows = manifest.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(
+                rows,
+                [f"{ir}\t{expected_hash}"],
+            )
+            self.assertNotEqual(
+                expected_hash,
+                A2L.file_sha256(original),
+            )
+
+            run_logged.assert_called_once()
+            command, log, cwd = run_logged.call_args.args
+            self.assertEqual(
+                command,
+                [
+                    str(root / "agda2lean"),
+                    "put-modules",
+                    "--database",
+                    str(root / "semantic.sqlite"),
+                    "--manifest",
+                    str(manifest),
+                ],
+            )
+            self.assertEqual(log, cache / "logs" / "catalog-ingest.log")
+            self.assertEqual(cwd, cache)
 
     def test_parameterized_multiline_module_header_is_discovered(self):
         with tempfile.TemporaryDirectory() as directory:
