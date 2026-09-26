@@ -170,7 +170,8 @@ scripts/check-monsterstate-correspondence.sh
 cabal run agda2lean -- init --database build/catalog.sqlite
 cabal run agda2lean -- put-module \
   --database build/catalog.sqlite \
-  --input module.cbor
+  --input module.cbor \
+  --source-sha256 <sha256-of-checked-agda-source>
 cabal run agda2lean -- inspect --database build/catalog.sqlite
 cabal run agda2lean -- verify --database build/catalog.sqlite
 
@@ -211,6 +212,7 @@ scripts/a2l_project.py build \
   --emitter "$emitter" \
   --workspace build/generated-project \
   --cache-root build/cache \
+  --catalog build/catalog.sqlite \
   --jobs 4 \
   --lake lake
 ```
@@ -219,6 +221,17 @@ scripts/a2l_project.py build \
 `-j1`, avoiding nested parallelism and the memory spikes that otherwise become
 severe on large libraries. Re-running an unchanged closure reuses its isolated
 Agda interfaces and IR.
+
+When `--catalog` is supplied, the project driver performs one bulk catalog
+ingest after successful extraction. The generated manifest binds every
+`module.a2l.cbor` to the SHA256 of the corresponding file in the hermetic
+cached source tree — the exact source bytes presented to Agda, not a later
+worktree snapshot. Catalog schema v3 stores this value as
+`module_heads.checked_source_sha256`.
+
+This allows downstream tools to distinguish a semantic snapshot that still
+matches the current source from one that has become stale after editing,
+without invoking Agda merely to answer that freshness question.
 
 Emission is fail-closed by default. The deprecated
 `--fail-on-reconstruction` spelling is accepted as a no-op for old scripts;
