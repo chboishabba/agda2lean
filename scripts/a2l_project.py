@@ -599,6 +599,38 @@ def emit_workspace(
         raise
 
 
+def populate_catalog(
+    plan: Plan,
+    cache: pathlib.Path,
+    emitter: pathlib.Path,
+    catalog: pathlib.Path,
+) -> None:
+    rows: list[str] = []
+    ir_root = cache / "ir"
+    source_root = cache / "source"
+    for name in plan.closure:
+        module = plan.modules[name]
+        source_path = source_root / pathlib.Path(module.relative_path)
+        rows.append(
+            f"{module_ir_path(ir_root, name)}\t{file_sha256(source_path)}"
+        )
+
+    manifest = cache / "catalog-manifest.tsv"
+    atomic_write(manifest, "\n".join(rows) + "\n")
+    run_logged(
+        [
+            str(emitter),
+            "put-modules",
+            "--database",
+            str(catalog),
+            "--manifest",
+            str(manifest),
+        ],
+        cache / "logs" / "catalog-ingest.log",
+        cache,
+    )
+
+
 def run_lake(workspace: pathlib.Path, lake: str) -> None:
     subprocess.run([lake, "update"], cwd=workspace, check=True)
     subprocess.run([lake, "build"], cwd=workspace, check=True)
@@ -645,6 +677,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     build_parser.add_argument("--replace", action="store_true")
     build_parser.add_argument("--lake", help="run this Lake executable after workspace generation")
+    build_parser.add_argument(
+        "--catalog",
+        type=pathlib.Path,
+        help=(
+            "optional agda2lean SQLite catalog populated in one bulk ingest "
+            "with the exact checked source SHA256 for every extracted module"
+        ),
+    )
 
     args = parser.parse_args(argv)
     try:
@@ -672,6 +712,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             tuple(path.resolve() for path in args.include_dir),
             args.jobs,
         )
+        if args.catalog is not None:
+            populate_catalog(
+                plan,
+                cache,
+                emitter,
+                args.catalog.resolve(),
+            )
         emit_workspace(
             plan,
             cache,
