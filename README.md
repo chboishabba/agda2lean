@@ -215,7 +215,29 @@ scripts/a2l_project.py build \
   --catalog build/catalog.sqlite \
   --jobs 4 \
   --lake lake
+
+
+# Promotion-only path for an already repaired Agda module/closure.
+# This typechecks/extracts and updates checked semantic heads without emitting
+# a Lean workspace.
+scripts/a2l_project.py promote \
+  --source-root path/to/agda/project \
+  --entry My.Project.Root \
+  --backend "$backend" \
+  --emitter "$emitter" \
+  --cache-root build/cache \
+  --catalog build/catalog.sqlite \
+  --jobs 4 \
+  --receipt build/promotion.json
 ```
+
+`promote` is deliberately narrower than `build`: it computes the same
+deterministic import closure and dependency frontiers, reuses the same
+toolchain/source cache, runs the Agda extraction backend, and bulk-ingests the
+resulting ModuleIR files with their exact checked source SHA256 values. It then
+stops. No Lean workspace or reconstruction step is produced. The optional JSON
+receipt records the promoted entries, closure size, frontier count, cache,
+catalog, and elapsed time.
 
 `--jobs` bounds the number of independent Agda processes. Each process uses
 `-j1`, avoiding nested parallelism and the memory spikes that otherwise become
