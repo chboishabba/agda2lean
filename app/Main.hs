@@ -30,7 +30,7 @@ import System.IO (hClose, openTempFile)
 
 data Command
   = Init GlobalOptions
-  | PutModule GlobalOptions FilePath
+  | PutModule GlobalOptions FilePath (Maybe Text.Text)
   | Classify FilePath FilePath
   | GetModule GlobalOptions Text.Text FilePath
   | EmitLean FilePath FilePath FilePath (Maybe FilePath) RegistryOptions Bool
@@ -70,7 +70,10 @@ commandParser =
           (info (Classify <$> inputOption <*> outputOption) (progDesc "Classify features and write canonical CBOR"))
         <> command
           "put-module"
-          (info (PutModule <$> globalOptions <*> inputOption) (progDesc "Validate and store a CBOR ModuleIR"))
+          ( info
+              (PutModule <$> globalOptions <*> inputOption <*> sourceSha256Option)
+              (progDesc "Validate and store a CBOR ModuleIR")
+          )
         <> command
           "get-module"
           (info (GetModule <$> globalOptions <*> moduleOption <*> outputOption) (progDesc "Write a module's canonical CBOR object"))
@@ -104,6 +107,17 @@ globalOptions =
 inputOption :: Parser FilePath
 inputOption =
   strOption (long "input" <> short 'i' <> metavar "PATH" <> help "Input CBOR path")
+
+sourceSha256Option :: Parser (Maybe Text.Text)
+sourceSha256Option =
+  optional
+    ( Text.pack
+        <$> strOption
+          ( long "source-sha256"
+              <> metavar "HEX"
+              <> help "SHA256 of the exact Agda source accepted for this module"
+          )
+    )
 
 outputOption :: Parser FilePath
 outputOption =
@@ -212,10 +226,14 @@ runCommand command' = do
       Init _ -> do
         stats <- readCatalogStats catalog
         Text.putStr (renderCatalogStats stats)
-      PutModule _ inputPath -> do
+      PutModule _ inputPath checkedSourceSha256 -> do
         bytes <- ByteString.readFile inputPath
         moduleIR <- either (ioError . userError . Text.unpack) pure (decodeModule bytes)
-        objectHash <- storeModule catalog moduleIR
+        objectHash <-
+          storeModuleWithSourceHash
+            catalog
+            checkedSourceSha256
+            moduleIR
         Text.putStrLn ("stored " <> renderObjectHash objectHash)
       GetModule _ name outputPath -> do
         result <- getModule catalog (CanonicalName name)
@@ -251,7 +269,7 @@ runCommand command' = do
 commandOptions :: Command -> GlobalOptions
 commandOptions = \case
   Init options -> options
-  PutModule options _ -> options
+  PutModule options _ _ -> options
   Classify _ _ -> error "classify does not use a catalog"
   EmitLean _ _ _ _ _ _ -> error "emit-lean does not use a catalog"
   BuiltinInventory _ -> error "builtin-inventory does not use a catalog"
