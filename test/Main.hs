@@ -526,6 +526,45 @@ catalogTests =
           case result of
             Left _ -> pure ()
             Right _ -> assertFailure "malformed checked source SHA256 was accepted"
+    , testCase "migrates schema v2 module heads to checked source provenance" $
+        withSystemTempDirectory "agda2lean-test" $ \directory -> do
+          let path = directory </> "catalog.sqlite"
+          connection <- open path
+          execute
+            connection
+            "CREATE TABLE catalog_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT"
+            ()
+          execute
+            connection
+            "INSERT INTO catalog_meta(key, value) VALUES ('schema_version', '2')"
+            ()
+          execute
+            connection
+            "INSERT INTO catalog_meta(key, value) VALUES ('codec_version', ?)"
+            (Only (Text.pack (show codecVersion)))
+          execute
+            connection
+            "CREATE TABLE ir_objects (\
+            \object_hash BLOB PRIMARY KEY, object_kind TEXT NOT NULL, \
+            \codec_version INTEGER NOT NULL, cbor BLOB NOT NULL, \
+            \byte_length INTEGER NOT NULL, created_at TEXT NOT NULL) STRICT"
+            ()
+          execute
+            connection
+            "CREATE TABLE module_heads (\
+            \module_name TEXT PRIMARY KEY, object_hash BLOB NOT NULL, \
+            \declaration_count INTEGER NOT NULL, term_count INTEGER NOT NULL, \
+            \updated_at TEXT NOT NULL) STRICT"
+            ()
+          close connection
+
+          catalog <- openCatalog path
+          _ <- storeModuleWithSourceHash catalog (Just (Text.replicate 64 "b")) exampleModule
+          summaries <- listModules catalog
+          closeCatalog catalog
+
+          fmap summaryCheckedSourceSha256 summaries
+            @?= [Just (Text.replicate 64 "b")]
     , testCase "atomically replaces a module head and its indexes" $
         withSystemTempDirectory "agda2lean-test" $ \directory -> do
           let path = directory </> "catalog.sqlite"
