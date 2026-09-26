@@ -20,6 +20,11 @@ CREATE TABLE IF NOT EXISTS module_heads (
     object_hash BLOB NOT NULL REFERENCES ir_objects(object_hash),
     declaration_count INTEGER NOT NULL CHECK (declaration_count >= 0),
     term_count INTEGER NOT NULL CHECK (term_count >= 0),
+    checked_source_sha256 TEXT
+        CHECK (
+            checked_source_sha256 IS NULL
+            OR length(checked_source_sha256) = 64
+        ),
     updated_at TEXT NOT NULL
 ) STRICT;
 
