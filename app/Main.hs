@@ -31,6 +31,7 @@ import System.IO (hClose, openTempFile)
 data Command
   = Init GlobalOptions
   | PutModule GlobalOptions FilePath (Maybe Text.Text)
+  | PutModules GlobalOptions FilePath
   | Classify FilePath FilePath
   | GetModule GlobalOptions Text.Text FilePath
   | EmitLean FilePath FilePath FilePath (Maybe FilePath) RegistryOptions Bool
@@ -75,6 +76,12 @@ commandParser =
               (progDesc "Validate and store a CBOR ModuleIR")
           )
         <> command
+          "put-modules"
+          ( info
+              (PutModules <$> globalOptions <*> manifestOption)
+              (progDesc "Bulk store ModuleIR files with checked source hashes")
+          )
+        <> command
           "get-module"
           (info (GetModule <$> globalOptions <*> moduleOption <*> outputOption) (progDesc "Write a module's canonical CBOR object"))
         <> command
@@ -117,6 +124,14 @@ sourceSha256Option =
               <> metavar "HEX"
               <> help "SHA256 of the exact Agda source accepted for this module"
           )
+    )
+
+manifestOption :: Parser FilePath
+manifestOption =
+  strOption
+    ( long "manifest"
+        <> metavar "PATH"
+        <> help "TSV rows: ModuleIR path<TAB>checked source SHA256"
     )
 
 outputOption :: Parser FilePath
@@ -235,6 +250,37 @@ runCommand command' = do
             checkedSourceSha256
             moduleIR
         Text.putStrLn ("stored " <> renderObjectHash objectHash)
+      PutModules _ manifestPath -> do
+        contents <- Text.readFile manifestPath
+        let rows =
+              [ (inputPath, sourceHash)
+              | line <- Text.lines contents
+              , not (Text.null (Text.strip line))
+              , not ("#" `Text.isPrefixOf` Text.strip line)
+              , let columns = Text.splitOn "\t" line
+              , [inputPath, sourceHash] <- [columns]
+              ]
+            nonCommentRows =
+              [ line
+              | line <- Text.lines contents
+              , not (Text.null (Text.strip line))
+              , not ("#" `Text.isPrefixOf` Text.strip line)
+              ]
+        unless
+          (length rows == length nonCommentRows)
+          (ioError (userError "invalid put-modules manifest row; expected PATH<TAB>SHA256"))
+        forM_ rows $ \(inputPath, sourceHash) -> do
+          bytes <- ByteString.readFile (Text.unpack inputPath)
+          moduleIR <-
+            either (ioError . userError . Text.unpack) pure (decodeModule bytes)
+          _ <-
+            storeModuleWithSourceHash
+              catalog
+              (Just sourceHash)
+              moduleIR
+          pure ()
+        Text.putStrLn
+          ("stored " <> Text.pack (show (length rows)) <> " module(s)")
       GetModule _ name outputPath -> do
         result <- getModule catalog (CanonicalName name)
         case result of
@@ -270,6 +316,7 @@ commandOptions :: Command -> GlobalOptions
 commandOptions = \case
   Init options -> options
   PutModule options _ _ -> options
+  PutModules options _ -> options
   Classify _ _ -> error "classify does not use a catalog"
   EmitLean _ _ _ _ _ _ -> error "emit-lean does not use a catalog"
   BuiltinInventory _ -> error "builtin-inventory does not use a catalog"
