@@ -21,6 +21,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from collections.abc import Iterable, Sequence
 
 
@@ -658,6 +659,40 @@ def main(argv: Sequence[str] | None = None) -> int:
     common_parser(plan_parser)
     plan_parser.add_argument("--output", type=pathlib.Path)
 
+    promote_parser = subparsers.add_parser(
+        "promote",
+        help=(
+            "typecheck/extract a project closure and promote checked module heads "
+            "into the semantic catalog without emitting a Lean workspace"
+        ),
+    )
+    common_parser(promote_parser)
+    promote_parser.add_argument("--backend", required=True, type=pathlib.Path)
+    promote_parser.add_argument("--emitter", required=True, type=pathlib.Path)
+    promote_parser.add_argument(
+        "--cache-root",
+        type=pathlib.Path,
+        default=pathlib.Path("build/cache"),
+    )
+    promote_parser.add_argument(
+        "--include-dir",
+        action="append",
+        default=[],
+        type=pathlib.Path,
+    )
+    promote_parser.add_argument(
+        "--jobs",
+        type=int,
+        default=max(1, min(4, os.cpu_count() or 1)),
+    )
+    promote_parser.add_argument("--toolchain-id")
+    promote_parser.add_argument("--catalog", required=True, type=pathlib.Path)
+    promote_parser.add_argument(
+        "--receipt",
+        type=pathlib.Path,
+        help="optional JSON promotion receipt path",
+    )
+
     build_parser = subparsers.add_parser(
         "build", help="extract a project closure and emit a self-contained Lake workspace"
     )
@@ -705,6 +740,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         source_key = source_fingerprint(plan)
         cache = prepare_cache(plan, args.cache_root.resolve(), toolchain_key, source_key)
         print(f"cache: {cache}")
+        started = time.perf_counter()
         extract_frontiers(
             plan,
             cache,
@@ -712,6 +748,32 @@ def main(argv: Sequence[str] | None = None) -> int:
             tuple(path.resolve() for path in args.include_dir),
             args.jobs,
         )
+
+        if args.command == "promote":
+            populate_catalog(
+                plan,
+                cache,
+                emitter,
+                args.catalog.resolve(),
+            )
+            receipt = {
+                "status": "promoted",
+                "entries": list(plan.entries),
+                "modules": len(plan.closure),
+                "frontiers": len(plan.frontiers),
+                "catalog": str(args.catalog.resolve()),
+                "cache": str(cache),
+                "elapsed_ms": round(
+                    (time.perf_counter() - started) * 1000.0,
+                    3,
+                ),
+            }
+            rendered = json.dumps(receipt, indent=2, sort_keys=True) + "\n"
+            if args.receipt is not None:
+                atomic_write(args.receipt.resolve(), rendered)
+            sys.stdout.write(rendered)
+            return 0
+
         if args.catalog is not None:
             populate_catalog(
                 plan,
