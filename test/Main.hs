@@ -500,6 +500,32 @@ catalogTests =
           statsObjects stats @?= 1
           statsDeclarations stats @?= 1
           fetched @?= Just exampleModule
+    , testCase "records and preserves checked source SHA256 provenance" $
+        withSystemTempDirectory "agda2lean-test" $ \directory -> do
+          let path = directory </> "catalog.sqlite"
+              sourceHash = Text.replicate 64 "a"
+          catalog <- openCatalog path
+          _ <- storeModuleWithSourceHash catalog (Just sourceHash) exampleModule
+          summariesAfterHash <- listModules catalog
+          _ <- storeModule catalog exampleModule
+          summariesAfterLegacyWrite <- listModules catalog
+          closeCatalog catalog
+          fmap summaryCheckedSourceSha256 summariesAfterHash
+            @?= [Just sourceHash]
+          fmap summaryCheckedSourceSha256 summariesAfterLegacyWrite
+            @?= [Just sourceHash]
+    , testCase "rejects malformed checked source SHA256 provenance" $
+        withSystemTempDirectory "agda2lean-test" $ \directory -> do
+          let path = directory </> "catalog.sqlite"
+          catalog <- openCatalog path
+          result <-
+            try
+              (storeModuleWithSourceHash catalog (Just "not-a-sha") exampleModule)
+              :: IO (Either IOError ObjectHash)
+          closeCatalog catalog
+          case result of
+            Left _ -> pure ()
+            Right _ -> assertFailure "malformed checked source SHA256 was accepted"
     , testCase "atomically replaces a module head and its indexes" $
         withSystemTempDirectory "agda2lean-test" $ \directory -> do
           let path = directory </> "catalog.sqlite"
