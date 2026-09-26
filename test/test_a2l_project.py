@@ -242,6 +242,75 @@ class ProjectPlanTests(unittest.TestCase):
             self.assertEqual(log, cache / "logs" / "catalog-ingest.log")
             self.assertEqual(cwd, cache)
 
+    def test_promote_extracts_and_populates_catalog_without_workspace(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            source = root / "source"
+            source.mkdir()
+            self.write(source, "Root", "value : Set\nvalue = Set\n")
+            backend = root / "backend"
+            emitter = root / "emitter"
+            backend.write_text("#!/bin/sh\n", encoding="utf-8")
+            emitter.write_text("#!/bin/sh\n", encoding="utf-8")
+            backend.chmod(0o755)
+            emitter.chmod(0o755)
+            receipt = root / "promotion.json"
+
+            fake_cache = root / "cache" / "prepared"
+            fake_cache.mkdir(parents=True)
+
+            with (
+                mock.patch.object(
+                    A2L,
+                    "toolchain_fingerprint",
+                    return_value="toolchain",
+                ),
+                mock.patch.object(
+                    A2L,
+                    "prepare_cache",
+                    return_value=fake_cache,
+                ),
+                mock.patch.object(A2L, "extract_frontiers") as extract,
+                mock.patch.object(A2L, "populate_catalog") as populate,
+                mock.patch.object(A2L, "emit_workspace") as emit_workspace,
+            ):
+                status = A2L.main(
+                    [
+                        "promote",
+                        "--source-root",
+                        str(source),
+                        "--entry",
+                        "Root",
+                        "--backend",
+                        str(backend),
+                        "--emitter",
+                        str(emitter),
+                        "--catalog",
+                        str(root / "semantic.sqlite"),
+                        "--cache-root",
+                        str(root / "cache"),
+                        "--jobs",
+                        "2",
+                        "--receipt",
+                        str(receipt),
+                    ]
+                )
+
+            self.assertEqual(status, 0)
+            extract.assert_called_once()
+            populate.assert_called_once()
+            emit_workspace.assert_not_called()
+
+            payload = json.loads(receipt.read_text(encoding="utf-8"))
+            self.assertEqual(payload["status"], "promoted")
+            self.assertEqual(payload["entries"], ["Root"])
+            self.assertEqual(payload["modules"], 1)
+            self.assertEqual(payload["frontiers"], 1)
+            self.assertEqual(
+                payload["catalog"],
+                str((root / "semantic.sqlite").resolve()),
+            )
+
     def test_parameterized_multiline_module_header_is_discovered(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
