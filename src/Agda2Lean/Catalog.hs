@@ -15,6 +15,7 @@ module Agda2Lean.Catalog
   , openCatalog
   , readCatalogStats
   , storeModule
+  , storeModuleWithSourceHash
   , verifyCatalog
   ) where
 
@@ -32,6 +33,7 @@ import Agda2Lean.IR
 import Control.Exception (onException, throwIO)
 import Control.Monad (forM_, unless)
 import Data.ByteString (ByteString)
+import Data.Char (isHexDigit)
 import qualified Data.ByteString as ByteString
 import Data.FileEmbed (embedFile, makeRelativeToProject)
 import Data.Int (Int64)
@@ -68,6 +70,7 @@ data ModuleSummary = ModuleSummary
   , summaryObjectHash :: ObjectHash
   , summaryDeclarationCount :: Int64
   , summaryTermCount :: Int64
+  , summaryCheckedSourceSha256 :: Maybe Text
   , summaryObjectBytes :: Int64
   , summaryUpdatedAt :: Text
   }
@@ -78,6 +81,7 @@ instance FromRow ModuleSummary where
     ModuleSummary
       <$> field
       <*> (ObjectHash <$> field)
+      <*> field
       <*> field
       <*> field
       <*> field
@@ -139,9 +143,20 @@ migrate connection = withTransaction connection $ do
     query_
       connection
       "SELECT value FROM catalog_meta WHERE key = 'schema_version'"
-  unless
-    (schemaVersions == [Only catalogSchemaVersion])
-    (throwIO (userError "unsupported SQLite catalog schema"))
+  case schemaVersions of
+    [Only "2"] -> do
+      execute_
+        connection
+        "ALTER TABLE module_heads ADD COLUMN checked_source_sha256 TEXT \
+        \CHECK (checked_source_sha256 IS NULL OR length(checked_source_sha256) = 64)"
+      execute
+        connection
+        "UPDATE catalog_meta SET value = ? WHERE key = 'schema_version'"
+        (Only catalogSchemaVersion)
+    [Only version]
+      | version == catalogSchemaVersion -> pure ()
+    _ ->
+      throwIO (userError "unsupported SQLite catalog schema")
   codecVersions <-
     query_
       connection
@@ -151,7 +166,11 @@ migrate connection = withTransaction connection $ do
     (throwIO (userError "catalog was written with a different CBOR codec version"))
 
 storeModule :: Catalog -> ModuleIR -> IO ObjectHash
-storeModule (Catalog connection) moduleIR = do
+storeModule catalog = storeModuleWithSourceHash catalog Nothing
+
+storeModuleWithSourceHash :: Catalog -> Maybe Text -> ModuleIR -> IO ObjectHash
+storeModuleWithSourceHash (Catalog connection) checkedSourceSha256 moduleIR = do
+  validateCheckedSourceSha256 checkedSourceSha256
   validated <-
     either
       (throwIO . userError . Text.unpack . Text.intercalate "\n" . Vector.toList)
@@ -178,17 +197,21 @@ storeModule (Catalog connection) moduleIR = do
     execute
       connection
       "INSERT INTO module_heads \
-      \(module_name, object_hash, declaration_count, term_count, updated_at) \
-      \VALUES (?, ?, ?, ?, ?) \
+      \(module_name, object_hash, declaration_count, term_count, \
+      \checked_source_sha256, updated_at) \
+      \VALUES (?, ?, ?, ?, ?, ?) \
       \ON CONFLICT(module_name) DO UPDATE SET \
       \object_hash = excluded.object_hash, \
       \declaration_count = excluded.declaration_count, \
       \term_count = excluded.term_count, \
+      \checked_source_sha256 = coalesce( \
+      \  excluded.checked_source_sha256, module_heads.checked_source_sha256), \
       \updated_at = excluded.updated_at"
       ( moduleName'
       , hashBytes'
       , Vector.length (moduleDeclarations validated)
       , Map.size (moduleTerms validated)
+      , checkedSourceSha256
       , now
       )
     execute
@@ -255,8 +278,8 @@ listModules (Catalog connection) =
   query_
     connection
     "SELECT heads.module_name, heads.object_hash, \
-    \heads.declaration_count, heads.term_count, objects.byte_length, \
-    \heads.updated_at \
+    \heads.declaration_count, heads.term_count, heads.checked_source_sha256, \
+    \objects.byte_length, heads.updated_at \
     \FROM module_heads AS heads \
     \JOIN ir_objects AS objects ON objects.object_hash = heads.object_hash \
     \ORDER BY heads.module_name"
@@ -381,7 +404,7 @@ mappingStorageText = \case
   Unsupported -> "unsupported"
 
 catalogSchemaVersion :: Text
-catalogSchemaVersion = "2"
+catalogSchemaVersion = "3"
 
 catalogSchemaBytes :: ByteString
 catalogSchemaBytes =
@@ -420,6 +443,15 @@ sqliteVersionAtLeast required version =
     of
       Just [major, minor, patch] -> (major, minor, patch) >= required
       _ -> False
+
+validateCheckedSourceSha256 :: Maybe Text -> IO ()
+validateCheckedSourceSha256 Nothing = pure ()
+validateCheckedSourceSha256 (Just value)
+  | Text.length value == 64
+      && Text.all isHexDigit value = pure ()
+  | otherwise =
+      throwIO
+        (userError "checked source SHA256 must be exactly 64 hexadecimal characters")
 
 timestamp :: IO Text
 timestamp =
