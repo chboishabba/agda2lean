@@ -19,11 +19,12 @@ import qualified Data.Vector as Vector
 renderModuleSummaries :: [ModuleSummary] -> Text
 renderModuleSummaries summaries =
   renderRows
-    ["MODULE", "DECLS", "TERMS", "BYTES", "OBJECT"]
+    ["MODULE", "DECLS", "TERMS", "BYTES", "SOURCE", "OBJECT"]
     [ [ summaryModuleName summary
       , showText (summaryDeclarationCount summary)
       , showText (summaryTermCount summary)
       , showText (summaryObjectBytes summary)
+      , maybe "-" (Text.take 16) (summaryCheckedSourceSha256 summary)
       , Text.take 16 (renderObjectHash (summaryObjectHash summary))
       ]
     | summary <- summaries
