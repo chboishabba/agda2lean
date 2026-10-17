@@ -10,6 +10,7 @@ extra-source-files:
     PLANNING.md
     ROADMAP.md
     docs/BUILTIN_REGISTRY.md
+    docs/DASHI_PROOF_ROUTER_CONTRACT.md
     docs/adr/0001-storage-and-canonical-encoding.md
     docs/adr/0002-elaborated-extraction-and-lean-facades.md
     docs/adr/0003-project-closure-and-hermetic-builds.md
@@ -57,6 +58,7 @@ library
     exposed-modules:
         Agda2Lean.Agda.Extract
         Agda2Lean.Agda.Snapshot
+        Agda2Lean.Capability
         Agda2Lean.Catalog
         Agda2Lean.Classify
         Agda2Lean.Codec
@@ -139,6 +141,23 @@ test-suite agda2lean-test
         temporary >=1.3,
         text >=2.0,
         vector >=0.13
+
+test-suite capability-contract-test
+    import: warnings
+    type: exitcode-stdio-1.0
+    hs-source-dirs: test
+    main-is: CapabilityContract.hs
+    other-modules:
+        Fixture
+    build-depends:
+        agda2lean,
+        base >=4.17 && <5,
+        containers >=0.6,
+        filepath >=1.4,
+        tasty >=1.5,
+        tasty-hunit >=0.10,
+        temporary >=1.3,
+        text >=2.0
 
 test-suite platform-registry-test
     import: warnings
