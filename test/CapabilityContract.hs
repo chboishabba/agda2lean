@@ -2,6 +2,7 @@
 
 module Main (main) where
 
+import Agda2Lean.Capability
 import Agda2Lean.Catalog
 import Fixture (exampleModule)
 import qualified Data.Text as Text
@@ -26,8 +27,8 @@ testCapability =
         checked = Text.replicate 64 "a"
     catalog <- openCatalog database
     _ <- storeModuleWithSourceHash catalog (Just checked) exampleModule
-    capability <- getDeclarationCapability catalog "DASHI.Example.Identity.identity"
     closeCatalog catalog
+    capability <- readDeclarationCapability database "DASHI.Example.Identity.identity"
     case capability of
       Nothing -> assertFailure "expected declaration capability"
       Just item -> do
@@ -45,7 +46,8 @@ testCapability =
 testMissing :: Assertion
 testMissing =
   withSystemTempDirectory "a2l-capability-missing" $ \directory -> do
-    catalog <- openCatalog (directory </> "catalog.sqlite3")
-    capability <- getDeclarationCapability catalog "DASHI.Missing.nope"
+    let database = directory </> "catalog.sqlite3"
+    catalog <- openCatalog database
     closeCatalog catalog
+    capability <- readDeclarationCapability database "DASHI.Missing.nope"
     capability @?= Nothing
