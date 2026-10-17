@@ -49,22 +49,71 @@ The mapping modes keep their existing IR meaning and are consumed conservatively
 
 No mapping mode, object hash, source hash, or successful extraction can establish a Lean theorem by itself.
 
+## SLR external formal-proof demands
+
+SLR may export a persisted proof obligation to `dashi-repo` as an authority-neutral formal demand carrying at least:
+
+```text
+demand_ref
+external_obligation_ref
+statement_digest
+query / statement owner
+requested target prover
+optional DA51 address
+optional Agda source declaration
+```
+
+`agda2lean` consumes only the source-declaration / translation-capability part of that route. It does **not** consume or mutate SLR PNF, residual, proposition, Matter, review, or payment state.
+
+The statement digest is part of the payment boundary:
+
+```text
+SLR statement_digest A
+  -> dashi-repo route for A
+  -> agda2lean capability/translation work for A
+  -> Lean artifact
+  -> independent Lean checker receipt for A
+```
+
+If translation/reconstruction changes the formal statement from digest `A` to digest `B`, the resulting certificate cannot pay the original SLR obligation merely because the symbol name, DA51 address, or source declaration stayed the same. The backend must provide an explicit equivalence/transport receipt, or the changed statement must be routed as a new demand.
+
+### Mapping-mode handoff
+
+```text
+Exact / Encoded
+  -> translation lane
+  -> independent Lean check
+
+Reconstruct
+  -> reconstruction obligation
+  -> agda2lean + Aristotle/Lean
+  -> independent Lean check
+
+Quarantined / Unsupported
+  -> independent formalisation
+  -> independent checker
+```
+
+Every mode retains `establishes_proof = false` until the independent checker boundary has been crossed.
+
 ## Max-cut with repository intelligence
 
 The intended orchestration is:
 
 ```text
-DA51 identity (optional stable join key)
+SLR proof obligation / formal demand
+  -> optional DA51 identity join
   -> dashi-repo exact/equivalent/similar/history discovery
   -> fail-closed absence receipt
   -> proof-debt classification
   -> agda2lean declaration capability (when an Agda source owner exists)
   -> Aristotle / Agda / agda2lean / Lean-kernel route
-  -> independent checker receipt
-  -> authority-neutral provenance edge back to DA51/repository intelligence
+  -> independent checker receipt bound to the same statement digest
+  -> authority-neutral provenance/evidence edge
+  -> exact SLR obligation reopen
 ```
 
-`dashi-repo` owns scheduling. `agda2lean` owns the translation capability it can substantiate from elaborated Agda IR. Aristotle owns reasoning/reconstruction work assigned to it. Agda and Lean kernels own their respective certification receipts.
+`dashi-repo` owns scheduling. `agda2lean` owns the translation capability it can substantiate from elaborated Agda IR. Aristotle owns reasoning/reconstruction work assigned to it. Agda and Lean kernels own their respective certification receipts. SLR remains the owner of PNF/proof-obligation/payment state.
 
 The following implications are forbidden:
 
@@ -75,4 +124,5 @@ agda2lean object hash != proof authority
 similar symbol != equivalent theorem
 DA51 status nibble != proof term
 routing receipt != theorem proof
+changed statement != original obligation without transport/equivalence receipt
 ```
