@@ -99,6 +99,16 @@ executable agda2lean
         text >=2.0,
         vector >=0.13
 
+executable agda2lean-capability
+    import: warnings
+    hs-source-dirs: app
+    main-is: CapabilityMain.hs
+    build-depends:
+        agda2lean,
+        base >=4.17 && <5,
+        optparse-applicative >=0.18,
+        text >=2.0
+
 executable agda2lean-agda
     import: warnings
     hs-source-dirs: agda-backend
@@ -157,7 +167,8 @@ test-suite capability-contract-test
         tasty >=1.5,
         tasty-hunit >=0.10,
         temporary >=1.3,
-        text >=2.0
+        text >=2.0,
+        vector >=0.13
 
 test-suite platform-registry-test
     import: warnings
