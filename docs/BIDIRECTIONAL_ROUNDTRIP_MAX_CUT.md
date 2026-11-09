@@ -182,3 +182,70 @@ JSON receipts are explicitly incapable of setting `stable_verified=true`.
   without promoting external ontology or incompatible foundational cases.
 
 No mathematical source from DASHI has been contributed upstream.
+
+## Executable local cycle runner — implemented after the initial roadmap
+
+`scripts/run_bidirectional_cycle.py` now executes an explicit ordered plan of
+pinned source checkout commands for either direction, with maximum per-step
+timeouts, expected-artifact hashing, source revision validation and immediate
+failure stops. It never uses a shell, fetches sources, publishes code, promotes
+metadata to theoremhood or calls an LLM. `scripts/test_run_bidirectional_cycle.py`
+contains local Git fixture controls for correct pinning, dirty inputs,
+missing artifacts, bad plan roles and the distinction between successful
+commands and certified semantics.
+
+Example format (replace the commands with the **actual** pinned translator,
+source-export and checker commands from their respective existing READMEs):
+
+```json
+{
+  "schema": "jmd-roundtrip-exec-v1",
+  "steps": [
+    {
+      "role": "lean-extract",
+      "cwd": "lean-source-checkout",
+      "git_sha": "PUT_EXACT_40_HEX_COMMIT_HERE",
+      "argv": ["lake", "env", "lean", "--run", "Export.lean"],
+      "timeout_seconds": 300,
+      "expected_artifacts": ["build/lean-export.ndjson"]
+    },
+    {
+      "role": "lean2agda",
+      "cwd": "lean2agda-checkout",
+      "git_sha": "PUT_EXACT_40_HEX_COMMIT_HERE",
+      "argv": ["make", "corpus-check"],
+      "timeout_seconds": 900,
+      "expected_artifacts": []
+    }
+  ]
+}
+```
+
+This two-step sample is a **format demonstration**, not a round trip; a real
+plan must include the *actual* translation and independent checker steps in
+both directions, with their output artifacts. The runner is not a semantic
+comparator: it records `semantic_fixed_point_proved=false` even if all
+commands return success and output hashes repeat. The M01–M07 selected
+correspondence proofs and verified normal forms are still unpaid.
+
+```sh
+python -m unittest discover -s scripts -p 'test_run_bidirectional_cycle.py' -v
+python scripts/run_bidirectional_cycle.py \
+  --plan /path/to/locally-reviewed-plan.json \
+  --base /path/to/parent-of-pinned-checkouts \
+  --out build/local-roundtrip-observation.json
+```
+
+**Safety:** executing untrusted translator repositories may execute their
+build scripts. Use a locally controlled Nix development sandbox and review the
+explicit argv plan. Do not run third-party build code with unpublished DASHI
+secrets or credentials.
+
+### Updated tranche result
+
+The machine-executable harness, checked generic inverse-law theorem sources,
+corpus metadata audit and candidate feature crosswalk are **implemented in
+source**. The uncompleted decisive result remains *one actual selected
+translation cycle with both kernel checks, source-faithful type/dependency
+correspondence and witness inverse laws*. Until it exists, do not mark a
+round trip semantically stable.
