@@ -22,7 +22,7 @@ class ConformanceTests(unittest.TestCase):
             "datatype,constructors\t-\tunpaid\n",encoding="utf-8")
         self.lean=self.root/"manifest.json"
         self.lean.write_text(json.dumps([
-            {"id":"lean-nat","features":["datatype","impredicative-prop"],
+            {"id":"lean-nat","features":["datatype","impredicative-prop","nested-and-mutual-inductives"],
              "tier":"T0","status":"planned","lean_name":"Nat.zero",
              "agda_files":[{"profile":"CC"}]},
             {"id":"lean-choice","features":["axioms"],"tier":"T2",
@@ -95,7 +95,8 @@ class ConformanceTests(unittest.TestCase):
             "agda2lean_feature\tlean2agda_feature\trelation\tstatus\n"
             "datatype\tnested-and-mutual-inductives\tpartial-overlap\tcandidate-only\n")
         output=mod.audit(self.agda,self.lean,[],path)
-        self.assertEqual(output["crosswalk_literal_candidates"],2)
+        self.assertEqual(output["crosswalk_literal_candidates"],1)
+        self.assertEqual(len(output["candidate_crosswalk"][0]["reviewed_taxonomy_candidates"]),1)
         self.assertTrue(all(not c["establishes_correspondence"] for c in
                             output["candidate_crosswalk"]))
 
