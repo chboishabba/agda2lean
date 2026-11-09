@@ -90,19 +90,39 @@ def read_lean_corpus(path):
           "candidate_only":True})
     return result
 
-def crosswalk(a2l_rows, l2a_rows):
+def read_feature_crosswalk(path):
+    if path is None:
+        return {}
+    rows=read_tsv(path, {"agda2lean_feature","lean2agda_feature","relation","status"})
+    relations={}
+    for row in rows:
+        a,b=row["agda2lean_feature"],row["lean2agda_feature"]
+        if not a or not b or row["status"]!="candidate-only":
+            raise ValueError("Crosswalk can only contain attributed candidate coordinates")
+        if (a,b) in relations:
+            raise ValueError("Duplicate taxonomy edge")
+        relations[(a,b)]=row["relation"]
+    return relations
+
+
+def crosswalk(a2l_rows, l2a_rows, relation_map=None):
     """Return capabilities and source-aware candidates, never semantic equivalence."""
     candidates=[]
+    relation_map=relation_map or {}
     for a in a2l_rows:
         a_tokens=set(a["feature_set"])
         for l in l2a_rows:
             # Lexical tag overlap is intentionally weak: do not invent a
             # vocabulary mapping between two different feature taxonomies.
             overlap=sorted(a_tokens & set(l["features"]))
-            if overlap:
+            mediated=sorted((a_feat,l_feat,why) for (a_feat,l_feat),why in relation_map.items()
+                            if a_feat in a_tokens and l_feat in l["features"])
+            if overlap or mediated:
                 candidates.append({
                     "a2l_case":a["id"],"l2a_case":l["id"],
                     "shared_literal_feature_tags":overlap,
+                    "reviewed_taxonomy_candidates":[{"agda_feature":f,"lean_feature":g,
+                        "relation":kind} for f,g,kind in mediated],
                     "a2l_status":a["expected"],"l2a_status":l["status"],
                     "candidate_only":True,"establishes_correspondence":False,
                 })
@@ -156,10 +176,10 @@ def validate_roundtrip(row):
           "case_id":row["case_id"],"checks":statuses,
           "receipts":sorted(witnessed)})}
 
-def audit(a2l, l2a, observations):
+def audit(a2l, l2a, observations, feature_crosswalk=None):
     entries=read_agda_manifest(a2l)
     counterpart=read_lean_corpus(l2a) if l2a else []
-    matches=crosswalk(entries,counterpart)
+    matches=crosswalk(entries,counterpart,read_feature_crosswalk(feature_crosswalk))
     receipts=[validate_roundtrip(r) for r in observations]
     return {
       "schema":"jmd-bidirectional-conformance-v1",
@@ -179,6 +199,7 @@ def main():
     p.add_argument("--agda2lean-manifest",required=True,type=Path)
     p.add_argument("--lean2agda-manifest",type=Path)
     p.add_argument("--observations",type=Path)
+    p.add_argument("--feature-crosswalk",type=Path)
     p.add_argument("--out",type=Path,required=True)
     args=p.parse_args()
     observations=[]
@@ -186,7 +207,8 @@ def main():
         for line in args.observations.read_text(encoding="utf-8").splitlines():
             if line.strip():
                 observations.append(json.loads(line))
-    result=audit(args.agda2lean_manifest,args.lean2agda_manifest,observations)
+    result=audit(args.agda2lean_manifest,args.lean2agda_manifest,observations,
+                 args.feature_crosswalk)
     args.out.parent.mkdir(parents=True,exist_ok=True)
     args.out.write_text(json.dumps(result,sort_keys=True,indent=2)+"\n",encoding="utf-8")
     print(json.dumps({k:v for k,v in result.items() if k not in {"candidate_crosswalk","roundtrip_observations"}},
