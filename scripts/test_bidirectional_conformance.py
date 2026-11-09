@@ -89,6 +89,24 @@ class ConformanceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,"target profile"):
             mod.read_lean_corpus(self.lean)
 
+    def test_reviewed_taxonomy_is_still_candidate_only(self):
+        path=self.root/"crosswalk.tsv"
+        path.write_text(
+            "agda2lean_feature\tlean2agda_feature\trelation\tstatus\n"
+            "datatype\tnested-and-mutual-inductives\tpartial-overlap\tcandidate-only\n")
+        output=mod.audit(self.agda,self.lean,[],path)
+        self.assertEqual(output["crosswalk_literal_candidates"],2)
+        self.assertTrue(all(not c["establishes_correspondence"] for c in
+                            output["candidate_crosswalk"]))
+
+    def test_crosswalk_cannot_assert_proof(self):
+        path=self.root/"crosswalk.tsv"
+        path.write_text(
+            "agda2lean_feature\tlean2agda_feature\trelation\tstatus\n"
+            "record\tstructure-eta\tsame-theorem\tproved\n")
+        with self.assertRaisesRegex(ValueError,"candidate"):
+            mod.read_feature_crosswalk(path)
+
     def test_canonical_order_independent(self):
         self.assertEqual(mod.fingerprint({"a":1,"b":2}),
                          mod.fingerprint({"b":2,"a":1}))
