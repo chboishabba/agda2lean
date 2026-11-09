@@ -130,3 +130,55 @@ compiler run, Lean/Agda kernel run or upstream transfer has been performed
 from this environment.** The benchmark does not assert any verified cycle
 from a JSON or a matching name. This limitation is an exact unpaid gate, not
 an architectural obstacle to future automation.
+
+
+## Cross-project corpus reconciliation and reviewed candidate taxonomy
+
+Independent source audit found the current upstream `lean2agda/corpus/manifest.json`
+contains **12 records, all marked `translated`**: **T0=1, T1=7, T2=4**.
+These are source-manifest statuses, not evidence that our current Agda 2.9
+environment reproduced their original Agda 2.8 checker results or that a
+round trip to Lean was completed.
+
+The `agda2lean` PR #7 manifest has **19 classified cases** and
+**zero `supported-correspondence`** (11 reconstruction boundaries and
+8 deliberately unsupported). This does not mean `lean2agda` is superior:
+their 12 entries and our 19 feature fixtures test different directions,
+versions and semantic acceptance criteria.
+
+`docs/roundtrip_feature_crosswalk.tsv` therefore records a minimal,
+source-reviewed, **candidate-only** taxonomy crosswalk for record/structure
+eta, projections, mutual definitions, integers/literals, irrelevance and
+Cubical/K-UIP. These coordinates are not equivalence relations.
+
+```sh
+python scripts/bidirectional_conformance.py \
+  --agda2lean-manifest test/conformance/manifest.tsv \
+  --lean2agda-manifest /path/to/lean2agda/corpus/manifest.json \
+  --feature-crosswalk docs/roundtrip_feature_crosswalk.tsv \
+  --out build/roundtrip-capability-intersection.json
+```
+
+The benchmark currently emits **discovery candidates** and
+**untrusted-observation-only** round-trip records. A separate local,
+authenticated proof referee must inspect live kernel artefacts; arbitrary
+JSON receipts are explicitly incapable of setting `stable_verified=true`.
+
+### Highest-alpha remaining exact work after the crosswalk
+
+- **M00a — runtime:** execute `scripts/test_bidirectional_conformance.py`
+  and the actual two source manifests; repair any schema/pin regressions.
+- **M00b — normalization:** define the first *checked* paired semantic
+  expression normal form, preserving universe profiles, binders, proof
+  irrelevance and classical axioms; do not hash dissimilar IRs together.
+- **M01/M02 — real witnesses:** construct and kernel-check actual inverse
+  representation maps over a selected shared base fragment; source-written
+  generic inverse laws remain conditional.
+- **M03–M06 — correspondence:** both checkers accept a real selected proof
+  and its dependencies/axioms/finite observable correspondence.
+- **M07 — certified fixed point:** instantiate the generic round-trip
+  idempotence theorem with those *actual* witness maps.
+- **M08–M10 — gap safety:** integrate ITIR's candidate-only gap output
+  without promoting external ontology or incompatible foundational cases.
+
+No mathematical source from DASHI has been contributed upstream.
