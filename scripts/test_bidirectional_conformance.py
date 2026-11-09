@@ -34,6 +34,7 @@ class ConformanceTests(unittest.TestCase):
         report=mod.audit(self.agda,self.lean,[])
         self.assertEqual(report["agda2lean_cases"],1)
         self.assertEqual(report["lean2agda_corpus_entries"],2)
+        self.assertEqual(report["crosswalk_candidate_pairs"],1)
         self.assertEqual(report["crosswalk_literal_candidates"],1)
         self.assertEqual(report["verified_roundtrips"],0)
         self.assertFalse(report["candidate_crosswalk"][0]["establishes_correspondence"])
@@ -95,6 +96,7 @@ class ConformanceTests(unittest.TestCase):
             "agda2lean_feature\tlean2agda_feature\trelation\tstatus\n"
             "datatype\tnested-and-mutual-inductives\tpartial-overlap\tcandidate-only\n")
         output=mod.audit(self.agda,self.lean,[],path)
+        self.assertEqual(output["crosswalk_candidate_pairs"],1)
         self.assertEqual(output["crosswalk_literal_candidates"],1)
         self.assertEqual(len(output["candidate_crosswalk"][0]["reviewed_taxonomy_candidates"]),1)
         self.assertTrue(all(not c["establishes_correspondence"] for c in
