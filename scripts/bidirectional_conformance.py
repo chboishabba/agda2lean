@@ -190,7 +190,9 @@ def audit(a2l, l2a, observations, feature_crosswalk=None):
       "agda2lean_positive_declared":sum(r["expected"]=="supported-correspondence" for r in entries),
       "lean2agda_corpus_entries":len(counterpart),
       "lean2agda_reported_translated":sum(r["status"]=="translated" for r in counterpart),
-      "crosswalk_literal_candidates":len(matches),
+      "crosswalk_candidate_pairs":len(matches),
+      "crosswalk_literal_candidates":sum(bool(m["shared_literal_feature_tags"])
+                                           for m in matches),
       "direct_literal_feature_pairs":sum(bool(m["shared_literal_feature_tags"])
                                           for m in matches),
       "foundational_conflict_candidates":sum(
