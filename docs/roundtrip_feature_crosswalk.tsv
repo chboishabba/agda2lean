@@ -1,0 +1,9 @@
+agda2lean_feature	lean2agda_feature	relation	why	status
+record	structure-eta	foundational-interaction	Agda record eta versus Lean structure eta must be reviewed per target	candidate-only
+projection	projections-and-let	foundational-interaction	Projection computation rules need independent preservation checks	candidate-only
+mutual	nested-and-mutual-inductives	partial-overlap	Mutual definitions interact with nested mutual inductives but are not identical	candidate-only
+recursion	nested-and-mutual-inductives	partial-overlap	Recursion and eliminator structure may overlap in translated mutual definitions	candidate-only
+integer	literals	partial-overlap	Integer constructor and literal representations require separate computational tests	candidate-only
+irrelevance	proof-irrelevance	foundational-interaction	Agda erasure and Lean definitional proof irrelevance are not interchangeable	candidate-only
+cubical	k-and-uip	foundational-conflict	Univalence and K/UIP reduction require an explicit profile and correspondence proof	candidate-only
+path	k-and-uip	foundational-conflict	A cubical path is not automatically Lean propositional equality	candidate-only
