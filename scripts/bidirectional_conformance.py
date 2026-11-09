@@ -124,6 +124,9 @@ def crosswalk(a2l_rows, l2a_rows, relation_map=None):
                     "reviewed_taxonomy_candidates":[{"agda_feature":f,"lean_feature":g,
                         "relation":kind} for f,g,kind in mediated],
                     "a2l_status":a["expected"],"l2a_status":l["status"],
+                    "l2a_tier":l["tier"],
+                    "requires_foundational_review":any(
+                        kind=="foundational-conflict" for _,_,kind in mediated),
                     "candidate_only":True,"establishes_correspondence":False,
                 })
     return sorted(candidates,key=lambda x:(x["a2l_case"],x["l2a_case"]))
@@ -188,6 +191,15 @@ def audit(a2l, l2a, observations, feature_crosswalk=None):
       "lean2agda_corpus_entries":len(counterpart),
       "lean2agda_reported_translated":sum(r["status"]=="translated" for r in counterpart),
       "crosswalk_literal_candidates":len(matches),
+      "direct_literal_feature_pairs":sum(bool(m["shared_literal_feature_tags"])
+                                          for m in matches),
+      "foundational_conflict_candidates":sum(
+          m["requires_foundational_review"] for m in matches),
+      "candidate_priority":sorted(matches,key=lambda m:(
+          m["requires_foundational_review"],
+          {"T0":0,"T1":1,"T2":2,"T3":3}[m["l2a_tier"]],
+          m["a2l_status"]!="supported-correspondence",
+          m["a2l_case"],m["l2a_case"])),
       "verified_roundtrips":0,
       "candidate_crosswalk":matches,
       "roundtrip_observations":receipts,
