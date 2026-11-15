@@ -410,3 +410,63 @@ only**, never an accepted safe target.
 toolchains; then construct source-bound proof relation and independent
 axiom/dependency/observer receipts to instantiate M01–M07. Current
 source changes **do not close M01–M07 or R3/R4**.
+
+---
+
+## 15 November 2026 — fundamental construct/function mapping maximum cut
+
+**New source-committed registry:** [agda_lean_foundational_mapping.tsv](agda_lean_foundational_mapping.tsv)
+and [AGDA_LEAN_FOUNDATIONAL_MAPPING.md](AGDA_LEAN_FOUNDATIONAL_MAPPING.md).
+
+The old reviewed crosswalk records eight *feature taxonomy interactions*.
+It is not sufficient for a faithful source-level translation because its
+matching vocabulary does not answer whether \`Set\` means \`Prop\`, whether
+dependent pairs erase proof witnesses, or which computational reductions
+the target inherits.
+
+The new mapping has **51 candidate entries**:
+
+| Mapping kind | Rows | Meaning |
+|---|---:|---|
+| \`fragment\` | 8 | Plausible restricted, proof-relevant core fragment |
+| \`bridge\` | 30 | Explicit representation/computation/axiom bridge required |
+| \`conflict\` | 10 | Foundational mismatch: do not promote by name matching |
+| \`no-direct\` | 3 | No general native counterpart; quarantine or restricted interpretation |
+| **Certified** | **0** | A mapping is NOT a theorem |
+
+The registry covers *all 13* slugs in the external
+\`formalverification/lean2agda/docs/foundations/gap-catalog.md\` and assigns
+per-row \`M03\` statement, \`M04\` axioms, \`M05\` dependencies, \`M06\`
+computation or \`M10\` incompatibility obligations, together with an Agda
+safe-profile or U-only caveat.
+
+**Non-negotiable sort boundary:** Agda \`Set ℓ\` naturally maps to Lean
+\`Type u\` for a carefully level-solved fragment; Agda \`Prop ℓ\` does
+not unconditionally map to Lean impredicative \`Prop\`. Agda
+\`Σ a : A, P a\` in \`Set\` does not automatically equal Lean
+\`Subtype P\` (proof of \`P a\` erased into \`Prop\`). Cubical
+\`Path/PathP\`, UIP/K, Lean quotient computation, and Agda REWRITE need
+separate interpretations and negative controls. This finding also
+justifies the prior correction of the Lean \`ForwardWitness.relation\`
+codomain from \`Prop\` to proof-relevant \`Type\`.
+
+**Reproducible metadata gate:**
+
+\`\`\`sh
+python3 scripts/check_foundational_mapping.py
+python3 -m unittest discover -s scripts \
+  -p 'test_check_foundational_mapping.py' -v
+\`\`\`
+
+The new validator rejects wrong/missing stable anchors, unreviewed profile
+values, unexpected foundational slugs, missing source gaps, duplicate IDs,
+empty obligations and *any* attempt to replace \`candidate-only\` with a
+claim of certification. Tests cover falsified Set/Prop and Subtype
+boundaries. It reports \`certified=0\` by construction.
+
+**R0 extension (taxonomy mapping only) is source-complete, not
+independently kernel-certified.** Actual M03–M06 cannot be paid by this
+dictionary; they require per-generated-declaration source identity,
+elaborated statement interpretation, independent checker output,
+dependency/axiom comparison and computation witnesses. The real
+first-instance R3/R4 maximum cut remains open.
