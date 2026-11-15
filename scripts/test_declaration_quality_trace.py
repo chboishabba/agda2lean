@@ -3,6 +3,9 @@ import copy
 import importlib.util
 import json
 import pathlib
+import hashlib
+import subprocess
+import sys
 import shutil
 import tempfile
 import unittest
@@ -159,6 +162,27 @@ class DeclarationQualityTraceTests(unittest.TestCase):
         self.assertEqual(len(result["declarations"]), 6)
         self.assertTrue(all(r["reviewed_project_dependencies"] for r in
                             result["declarations"]))
+
+    def test_cli_hashes_ir_diagnostics_and_remains_observational(self):
+        ir = self.root / "module.a2l.cbor"
+        ir.write_bytes(b"\xa1\x01\x02")
+        diagnostics = self.root / "diagnostics.tsv"
+        diagnostics.write_text("Identity.identity\tNative\n", encoding="utf-8")
+        out = self.root / "quality.json"
+        subprocess.run([
+            sys.executable, str(HERE / "declaration_quality_trace.py"),
+            "--case", str(self.case), "--source", str(self.source),
+            "--emitted", str(self.emitted), "--registry", str(REGISTRY),
+            "--source-ir", str(ir), "--diagnostics", str(diagnostics),
+            "--manifest", str(self.manifest), "--out", str(out),
+        ], check=True, capture_output=True, text=True)
+        report = json.loads(out.read_text())
+        self.assertEqual(report["agda_elaborated_ir_sha256"],
+                         hashlib.sha256(ir.read_bytes()).hexdigest())
+        self.assertEqual(report["emitter_diagnostics_sha256"],
+                         hashlib.sha256(diagnostics.read_bytes()).hexdigest())
+        self.assertFalse(report["independent_lean_kernel_receipt_authenticated"])
+        self.assertEqual(report["certified_roundtrips"], 0)
 
     def test_malformed_manifest_fails_closed(self):
         self.manifest.write_text("Identity.identity\ttype-direct\n", encoding="utf-8")
