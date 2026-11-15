@@ -22,6 +22,54 @@ SHA = re.compile(r"[0-9a-f]{40}\Z")
 STAGES={"lean-extract","lean2agda","agda-check","agda-extract",
         "agda2lean","lean-check","correspondence","normalize"}
 MAX_STEPS=32
+# A strict plan is still an *observation*, never a kernel certificate.
+# Seven stages require a return object, not just two successful commands.
+CYCLE_ROLES = {
+    "agda-first": ("agda-check", "agda-extract", "agda2lean",
+                   "lean-check", "lean2agda", "agda-check", "correspondence"),
+    "lean-first": ("lean-check", "lean-extract", "lean2agda",
+                   "agda-check", "agda2lean", "lean-check", "correspondence"),
+}
+
+def confined(base: Path, relative: str) -> Path:
+    if not isinstance(relative, str) or not relative or os.path.isabs(relative):
+        raise ValueError("Expected a nonempty relative path")
+    root = base.resolve()
+    target = (root / relative).resolve()
+    if not target.is_relative_to(root):
+        raise ValueError("Path escapes its declared checkout")
+    return target
+
+def check_source(plan: dict, base: Path) -> dict | None:
+    """Bind strict cycles to the bytes of an actual tracked source file."""
+    if "cycle_origin" not in plan:
+        return None
+    source = plan["source"]
+    checkout = confined(base, source["cwd"])
+    path = confined(checkout, source["path"])
+    if not path.is_file() or path.is_symlink():
+        raise ValueError("Source must be a regular tracked file")
+    expected = source["sha256"]
+    if not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{64}", expected):
+        raise ValueError("Source requires a full SHA256")
+    if sha256(path) != expected:
+        raise ValueError("Source byte SHA256 mismatch")
+    tracked = subprocess.run(
+        ["git", "ls-files", "--error-unmatch", "--", source["path"]],
+        cwd=checkout, capture_output=True, text=True, check=False)
+    if tracked.returncode:
+        raise ValueError("Source file is not tracked at the checked-out pin")
+    return {"cwd": source["cwd"], "path": source["path"], "sha256": expected}
+
+def check_artifact_chain(receipts: list[dict], base: Path) -> None:
+    """Reject post-hoc artifact mutation before any next stage can consume it."""
+    for prior in receipts:
+        checkout = confined(base, prior["cwd"])
+        for artifact in prior["artifacts"]:
+            path = confined(checkout, artifact["path"])
+            if not path.is_file() or sha256(path) != artifact["sha256"]:
+                raise ValueError("A prior stage artifact changed or disappeared")
+
 
 def sha256(path: Path) -> str:
     h=hashlib.sha256()
@@ -51,6 +99,38 @@ def read_plan(path: Path) -> dict:
             raise ValueError("Artifact list must be explicit")
         if int(step.get("timeout_seconds",120)) not in range(1,901):
             raise ValueError("Each command must be bounded to <=900 seconds")
+    if "cycle_origin" in obj:
+        origin = obj["cycle_origin"]
+        if origin not in CYCLE_ROLES:
+            raise ValueError("Unknown strict cycle origin")
+        if tuple(step["role"] for step in steps) != CYCLE_ROLES[origin]:
+            raise ValueError("Strict cycle must include the complete ordered return path")
+        if not isinstance(obj.get("case_id"), str) or not obj["case_id"]:
+            raise ValueError("Strict cycle requires a case identity")
+        source = obj.get("source")
+        if not isinstance(source, dict) or not all(
+            isinstance(source.get(k), str) and source[k]
+            for k in ("cwd", "path", "sha256")
+        ):
+            raise ValueError("Strict cycle requires exact source path and digest")
+        if source["cwd"] != steps[0]["cwd"]:
+            raise ValueError("Source checkout must match the first checker")
+        for i, step in enumerate(steps):
+            artifacts = step.get("expected_artifacts", [])
+            if not artifacts or not all(isinstance(p, str) and p for p in artifacts):
+                raise ValueError("Every strict stage needs an expected artifact")
+            if len(artifacts) != len(set(artifacts)):
+                raise ValueError("Duplicate strict stage artifacts")
+            if i:
+                links = step.get("consumes")
+                if not isinstance(links, list) or not links:
+                    raise ValueError("Strict stages must declare input artifact lineage")
+                for link in links:
+                    if (not isinstance(link, dict)
+                        or type(link.get("from_step")) is not int
+                        or link["from_step"] < 0 or link["from_step"] >= i
+                        or link.get("artifact") not in steps[link["from_step"]]["expected_artifacts"]):
+                        raise ValueError("Invalid strict input artifact lineage")
     return obj
 
 def check_pin(cwd: Path, expected: str) -> dict:
@@ -74,9 +154,17 @@ def execute(plan: dict, *, base: Path) -> dict:
     Translators may write into their own declared build trees. This runner does
     not fetch, clone, commit, push, or silently invoke an agent.
     """
+    base = base.resolve()
+    source_identity = check_source(plan, base)
     receipts=[]
     for number,step in enumerate(plan["steps"]):
-        cwd=(base/step["cwd"]).resolve()
+        cwd=confined(base, step["cwd"])
+        if "cycle_origin" in plan:
+            check_artifact_chain(receipts, base)
+            for link in step.get("consumes", []):
+                previous = receipts[link["from_step"]]
+                if not any(a["path"] == link["artifact"] for a in previous["artifacts"]):
+                    raise ValueError("Strict input lacks a produced artifact")
         if not cwd.is_dir():
             raise ValueError(f"Missing step checkout {cwd}")
         pin=check_pin(cwd,step.get("git_sha",""))
@@ -91,18 +179,18 @@ def execute(plan: dict, *, base: Path) -> dict:
         except subprocess.TimeoutExpired:
             code=-1
             reason="timeout"
+        # Source mutation during execution invalidates the checked-out pin.
+        check_pin(cwd, step.get("git_sha", ""))
         artifacts=[]
         for rel in step.get("expected_artifacts",[]):
-            if not isinstance(rel,str) or not rel or os.path.isabs(rel):
-                raise ValueError("Expected artifacts must be relative to checkout")
-            artifact=(cwd/rel).resolve()
-            if not artifact.is_relative_to(cwd):
-                raise ValueError("Path escape in expected artifacts")
+            artifact=confined(cwd, rel)
             if artifact.is_file():
                 artifacts.append({"path":rel,"sha256":sha256(artifact),"bytes":artifact.stat().st_size})
         if code==0 and len(artifacts)!=len(step.get("expected_artifacts",[])):
             reason="missing-artifact"
         receipts.append({"ordinal":number,"role":step["role"],
+            "cwd":step["cwd"],
+            "consumes":step.get("consumes", []),
             "command_sha256":hashlib.sha256(json.dumps(step["argv"],separators=(",",":")).encode()).hexdigest(),
             "source_pin":pin["revision"],"artifacts":artifacts,
             "exit_code":code,"status":reason,"kernel_certified":False})
@@ -112,6 +200,10 @@ def execute(plan: dict, *, base: Path) -> dict:
         r["status"]=="accepted" for r in receipts)
     return {"schema":"jmd-roundtrip-execution-receipt-v1",
        "plan_digest":hashlib.sha256(json.dumps(plan,sort_keys=True).encode()).hexdigest(),
+       "cycle_origin":plan.get("cycle_origin"),
+       "case_id":plan.get("case_id"),
+       "source_identity":source_identity,
+       "ordered_cycle_complete":bool(plan.get("cycle_origin")) and success,
        "steps_requested":len(plan["steps"]),"steps_executed":len(receipts),
        "commands_succeeded":success,"receipts":receipts,
        "semantic_fixed_point_proved":False,
