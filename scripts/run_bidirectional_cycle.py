@@ -47,7 +47,7 @@ def check_source(plan: dict, base: Path) -> dict | None:
     source = plan["source"]
     checkout = confined(base, source["cwd"])
     path = confined(checkout, source["path"])
-    if not path.is_file() or path.is_symlink():
+    if not path.is_file() or (checkout / source["path"]).is_symlink():
         raise ValueError("Source must be a regular tracked file")
     expected = source["sha256"]
     if not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{64}", expected):
@@ -78,8 +78,7 @@ def sha256(path: Path) -> str:
             h.update(chunk)
     return h.hexdigest()
 
-def read_plan(path: Path) -> dict:
-    obj=json.loads(path.read_text(encoding="utf-8"))
+def validate_plan(obj: dict) -> dict:
     if not isinstance(obj,dict) or obj.get("schema")!="jmd-roundtrip-exec-v1":
         raise ValueError("Wrong plan schema")
     steps=obj.get("steps")
@@ -133,6 +132,9 @@ def read_plan(path: Path) -> dict:
                         raise ValueError("Invalid strict input artifact lineage")
     return obj
 
+def read_plan(path: Path) -> dict:
+    return validate_plan(json.loads(path.read_text(encoding="utf-8")))
+
 def check_pin(cwd: Path, expected: str) -> dict:
     if not SHA.fullmatch(expected):
         raise ValueError("Every step requires full pinned Git SHA")
@@ -154,6 +156,7 @@ def execute(plan: dict, *, base: Path) -> dict:
     Translators may write into their own declared build trees. This runner does
     not fetch, clone, commit, push, or silently invoke an agent.
     """
+    plan = validate_plan(plan)
     base = base.resolve()
     source_identity = check_source(plan, base)
     receipts=[]
