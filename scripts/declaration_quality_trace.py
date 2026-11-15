@@ -69,7 +69,8 @@ def parse_emission(path: pathlib.Path) -> dict[str, dict]:
             if declarations[current]["direct_dependencies"] is not None:
                 raise TraceError(f"Duplicate -- Direct dependencies for {current}")
             raw = deps.group(1).strip()
-            names = [] if raw == "(none)" else [s.strip() for s in raw.split(",")]
+            names = [] if raw == "(none)" else [s.strip().replace("«", "").replace("»", "")
+                                                for s in raw.split(",")]
             if not raw or any(not x for x in names) or len(names) != len(set(names)):
                 raise TraceError(f"Malformed -- Direct dependencies for {current}")
             declarations[current]["direct_dependencies"] = sorted(names)
