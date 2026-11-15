@@ -97,6 +97,8 @@ jobs:
             --case fixtures/bidirectional/identity_mapping_case.json \
             --source test/agda/Identity.agda \
             --emitted build/agda-ir/Identity.generated.lean \
+            --source-ir build/agda-ir/Identity/module.a2l.cbor \
+            --diagnostics build/agda-ir/Identity.diagnostics.tsv \
             --out build/agda-ir/Identity.foundation-observation.json
           python3 - <<'PY'
           import json
