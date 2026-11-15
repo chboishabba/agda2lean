@@ -365,8 +365,13 @@ python -m unittest discover -s scripts \
 python -m unittest discover -s scripts \
   -p 'test_bidirectional_conformance.py' -v
 
-# Requires pinned Lean 4.28.0; cannot run without the compiler:
+# Fail-closed local acceptance of BOTH native reference specifications
+# and the Python reporter/runner regression suites:
+bash scripts/check-bidirectional-reference-maxcut.sh
+
+# Or run the independent Lean 4.28 and Agda 2.9 reference checks separately:
 bash scripts/check-translation-quality.sh
+scripts/cabal-agda-2.9.sh list-bin --flag agda-backend exe:agda2lean-agda
 \`\`\`
 
 Coverage includes valid seven-stage fixture execution, missing return,
@@ -375,6 +380,10 @@ escape, after-the-fact artifact rewrite, tracked-source mutation,
 wrong checker, forged authentication, malformed digests and no-promotion
 negative controls. The fixture uses **fake Python subprocess commands on
 purpose** to prove the receipt still refuses semantic certification.
+The local acceptance wrapper is intentionally fail-closed if either pinned
+Lean 4.28 or the Agda 2.9 backend is unavailable; there is no green-by-skip
+path. It still checks only the *hand-written reference theories*, not the
+translation of a real source theorem.
 
 ### Exact remaining maximum cut — no premature promotions
 
