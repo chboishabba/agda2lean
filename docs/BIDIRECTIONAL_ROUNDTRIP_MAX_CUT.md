@@ -500,7 +500,7 @@ have separate observation-only statuses; conflicts quarantine. No JSON
 flag, syntax match, successful kernel compilation, or dependency equality
 automatically establishes the cross-theory relation.
 
-The 14 additional declaration-referee tests were executed locally and passed
+The 15 additional declaration-referee tests were executed locally and passed
 against synthetic Lean emitter/manifest content and a synthetic registry
 stand-in. The exact-head CI tests using the genuine 51-row registry and
 pinned native compilers, and both real-direction translation cycles, remain
