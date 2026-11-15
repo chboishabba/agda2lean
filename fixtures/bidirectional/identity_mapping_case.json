@@ -10,7 +10,8 @@
         "sort.set",
         "pi.dependent",
         "lambda.abs"
-      ]
+      ],
+      "expected_project_dependencies": []
     },
     {
       "agda": "Identity.identity-law",
@@ -19,6 +20,9 @@
         "sort.set",
         "pi.dependent",
         "eq.intro"
+      ],
+      "expected_project_dependencies": [
+        "Identity.identity"
       ]
     }
   ]
