@@ -1,0 +1,85 @@
+{
+  "schema": "a2l-declaration-mapping-case-v1",
+  "module": "JFixedPoint",
+  "source_sha256": "f3ee60483de5a2086a75b74f1c9c2636cdee1542a79092d1477b92362c022436",
+  "declarations": [
+    {
+      "agda": "JFixedPoint.unit-converges",
+      "lean": "JFixedPoint.«unit-converges»",
+      "registry_ids": [
+        "eq.intro",
+        "data.nat",
+        "nat.mul"
+      ],
+      "expected_project_dependencies": [
+        "JFixedPoint.contract",
+        "JFixedPoint.unit-obs"
+      ]
+    },
+    {
+      "agda": "JFixedPoint.fixed-0",
+      "lean": "JFixedPoint.«fixed-0»",
+      "registry_ids": [
+        "eq.intro",
+        "data.nat",
+        "data.recursion"
+      ],
+      "expected_project_dependencies": [
+        "JFixedPoint.contract",
+        "JFixedPoint.stack"
+      ]
+    },
+    {
+      "agda": "JFixedPoint.fixed-1",
+      "lean": "JFixedPoint.«fixed-1»",
+      "registry_ids": [
+        "eq.intro",
+        "data.nat",
+        "data.recursion"
+      ],
+      "expected_project_dependencies": [
+        "JFixedPoint.contract",
+        "JFixedPoint.stack"
+      ]
+    },
+    {
+      "agda": "JFixedPoint.fixed-2",
+      "lean": "JFixedPoint.«fixed-2»",
+      "registry_ids": [
+        "eq.intro",
+        "data.nat",
+        "data.recursion"
+      ],
+      "expected_project_dependencies": [
+        "JFixedPoint.contract",
+        "JFixedPoint.stack"
+      ]
+    },
+    {
+      "agda": "JFixedPoint.fixed-100",
+      "lean": "JFixedPoint.«fixed-100»",
+      "registry_ids": [
+        "eq.intro",
+        "data.nat",
+        "data.recursion"
+      ],
+      "expected_project_dependencies": [
+        "JFixedPoint.contract",
+        "JFixedPoint.stack"
+      ]
+    },
+    {
+      "agda": "JFixedPoint.all-196884",
+      "lean": "JFixedPoint.«all-196884»",
+      "registry_ids": [
+        "eq.intro",
+        "data.list",
+        "data.nat"
+      ],
+      "expected_project_dependencies": [
+        "JFixedPoint.contract-all",
+        "JFixedPoint.tower-3"
+      ]
+    }
+  ]
+}
