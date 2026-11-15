@@ -199,6 +199,10 @@ def execute(plan: dict, *, base: Path) -> dict:
             "exit_code":code,"status":reason,"kernel_certified":False})
         if reason!="accepted":
             break
+    # A final-stage command may mutate an earlier artifact; audit the entire
+    # accumulated chain once more after the final subprocess returns.
+    if "cycle_origin" in plan:
+        check_artifact_chain(receipts, base)
     success=len(receipts)==len(plan["steps"]) and all(
         r["status"]=="accepted" for r in receipts)
     return {"schema":"jmd-roundtrip-execution-receipt-v1",
