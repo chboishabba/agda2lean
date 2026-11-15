@@ -32,6 +32,10 @@ jobs:
       - run: cabal test all --test-show-details=direct
       - name: Test deterministic project planning
         run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -v test/test_a2l_project.py
+      - name: Test bidirectional fail-closed quality contracts
+        run: |
+          PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts -p 'test_bidirectional_conformance.py' -v
+          PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts -p 'test_run_bidirectional_cycle.py' -v
 
   agda-backend:
     runs-on: ubuntu-latest
@@ -79,6 +83,8 @@ jobs:
           grep -q -- "-- Mapping: Reconstruct" build/agda-ir/LocalRewrite.lean
       - name: Generate, build, and audit JFixedPoint
         run: bash scripts/check-jfixedpoint.sh
+      - name: Kernel-check compositional quality relations
+        run: bash scripts/check-translation-quality.sh
 
   dashi-mirror-smoke:
     runs-on: ubuntu-latest
