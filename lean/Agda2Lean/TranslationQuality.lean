@@ -28,7 +28,8 @@ structure ForwardWitness (A : Type u) (B : Type v) where
 
 /-- A concrete witness, not declaration-name equality, supplies the
     proposition needed by a semantic correspondence check. -/
-theorem translation_related (r : ForwardWitness A B) (a : A) :
+theorem translation_related {A : Type u} {B : Type v}
+    (r : ForwardWitness A B) (a : A) :
     r.relation a (r.translate a) :=
   r.preserved a
 
