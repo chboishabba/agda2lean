@@ -109,7 +109,7 @@ def checked_case(case: dict, registry: dict) -> list[dict]:
         raise TraceError("Case requires reviewed declaration expectations")
     names = set()
     for spec in specs:
-        if not isinstance(spec, dict) or set(spec) != {"agda", "lean", "registry_ids"}:
+        if not isinstance(spec, dict) or set(spec) != {"agda", "lean", "registry_ids", "expected_project_dependencies"}:
             raise TraceError("Invalid declaration mapping shape")
         name, lean = spec["agda"], spec["lean"]
         if not isinstance(name, str) or not name.startswith(module + ".") or not NAME.fullmatch(name):
@@ -119,6 +119,12 @@ def checked_case(case: dict, registry: dict) -> list[dict]:
         if name in names:
             raise TraceError("Duplicate declaration expectation")
         names.add(name)
+        required = spec["expected_project_dependencies"]
+        if (not isinstance(required, list) or
+            any(not isinstance(x, str) or not x.startswith(module + ".") or
+                not NAME.fullmatch(x) or x == name for x in required) or
+            len(required) != len(set(required))):
+            raise TraceError(f"Invalid reviewed project dependencies for {name}")
         ids = spec["registry_ids"]
         if not isinstance(ids, list) or not ids or not all(isinstance(x, str) for x in ids):
             raise TraceError(f"No feature IDs for {name}")
@@ -146,6 +152,10 @@ def build_trace(*, case_path: pathlib.Path, source: pathlib.Path,
         if origin not in annotations:
             raise TraceError(f"Missing emitted declaration with exact source tag: {origin}")
         header = annotations[origin]
+        required = set(spec["expected_project_dependencies"])
+        observed = header["direct_dependencies"]
+        if required and (observed is None or not required.issubset(set(observed))):
+            raise TraceError(f"Emitted project dependency boundary missing required edges for {origin}")
         # Metadata may be incomplete: record the absence rather than pretending
         # that an output has been independently checked by the Lean kernel.
         features = sorted(spec["registry_ids"])
@@ -154,10 +164,13 @@ def build_trace(*, case_path: pathlib.Path, source: pathlib.Path,
         conflicts = [f for f in features if registry[f]["correspondence"] in
                      {"conflict", "no-direct"}]
         lean_info = lean_manifest.get(spec["lean"])
+        reconstruction = (header["mapping"] is not None and
+                          "reconstruct" in header["mapping"].lower())
         rows.append({
             "agda_declaration": origin,
             "lean_expected_constant": spec["lean"],
             "reviewed_feature_ids": features,
+            "reviewed_project_dependencies": sorted(required),
             "observed_emitter_annotation": header["mapping"],
             "observed_agda_direct_dependencies": header["direct_dependencies"],
             "agda_header_line": header["line"],
@@ -165,6 +178,8 @@ def build_trace(*, case_path: pathlib.Path, source: pathlib.Path,
             "foundation_conflicts": sorted(conflicts),
             "unpaid_obligations": obligations,
             "status": "quarantined-foundational-conflict" if conflicts else
+                      "reconstruction-observation-only" if reconstruction else
+                      "incomplete-emitter-annotation" if header["mapping"] is None else
                       "candidate-observation-only",
             "kernel_correspondence_certified": False,
         })
