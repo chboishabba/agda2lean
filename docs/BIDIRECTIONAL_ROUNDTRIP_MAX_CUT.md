@@ -261,9 +261,12 @@ successful subprocess, JSON boolean, or finite test a proof of equivalence.
 
 ### Quality formalism (the actual acceptance criterion)
 
-We distinguish an explicitly **provided** logical relation
-\(\mathcal R_{A,B} : A \to B \to \mathrm{Prop}\) from a translator whose
-correctness must be **proved**. A forward witness is
+We distinguish an explicitly **provided**, proof-relevant logical relation
+\(\mathcal R_{A,B} : A \to B \to \mathrm{Type}\) (Agda: `Set`) from a
+translator whose correctness must be **proved**. An arbitrary Agda `Set`
+witness cannot be silently translated into proof-irrelevant Lean `Prop`;
+any proposition-only or quotient presentation requires a separately checked
+adapter and a computation/erasure policy. A forward witness is
 
 \[
 (\mathcal R,F,h_F),\qquad
@@ -275,7 +278,15 @@ The new \`lean/Agda2Lean/TranslationQuality.lean\` represents this as
 for products (\`ProdRel\`), options (\`OptionRel\`) and lists (\`ListRel\`).
 It also defines the function-space relation \`ArrowRel\` and makes observable
 computation preservation an explicit \`ObserverWitness\` obligation.
-A hand-written Boolean identity witness is a **sanity control only**.
+A hand-written, non-vacuous Boolean constructor relation (`BoolMatch`) is a **sanity control only**.
+
+
+The companion `test/agda/TranslationQuality.agda` is a native,
+proof-relevant Agda 2.9 reference with matching forward, product, Maybe,
+List, Arrow, observer and Boolean controls. Both files are **source-written**:
+the pinned toolchains must still check them independently, and their analogous
+names do not establish a cross-kernel equivalence. The CI workflow now has
+separate Agda and Lean kernel-check steps for these reference modules.
 
 This is deliberately weaker than a global isomorphism: a quotient,
 proof-irrelevant encoding or Cubical construction may have a logical
@@ -371,7 +382,7 @@ purpose** to prove the receipt still refuses semantic certification.
 |---|---|---|
 | **R0** | 19 Agda feature cases / 12 Lean corpus examples yield 42 reviewed taxonomy candidate pairs, with 0 literal-feature matches and 0 certified pairs | Align source, translator, Lean and Agda version pins for one identical object |
 | **R1** | Strict source-bound observer, anti-forgery checks and regression source written | Execute exact-head Python tests; attach output and mutation receipts |
-| **R2/M00b** | Typed \`ForwardWitness\`, \`ArrowRel\`, \`ProdRel\`, \`OptionRel\`, \`ListRel\`, \`ObserverWitness\` source written | Lean 4.28 kernel check; instantiate the relation on actual emitted representations |
+| **R2/M00b** | Paired Agda/Lean proof-relevant \`ForwardWitness\`, \`ArrowRel\`, \`ProdRel\`, \`OptionRel\`/\`MaybeRel\`, \`ListRel\`, \`ObserverWitness\` source written | Lean 4.28 kernel check; instantiate the relation on actual emitted representations |
 | **R3** | Real-command full-cycle plan shape and artifact lineage now available | Execute native A→L→A and L→A→L on pinned same-source examples, not fake fixtures |
 | **R4/M01–M06** | Exact admission obligations identified; no real-cycle theorem evidence | Both kernels check; statement equivalence; direct/transitive dependencies; assumptions; computational observers |
 | **R5/M07–M10** | Positive structural relation template and fail-closed negative controls | Derive fixed point from real maps; add dependent/recursive cases; enforce classical/Cubical incompatibility |
