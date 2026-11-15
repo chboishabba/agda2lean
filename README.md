@@ -19,18 +19,32 @@ Agda elaboration
 
 The [core construct/function dictionary](docs/AGDA_LEAN_FOUNDATIONAL_MAPPING.md)
 and its [51-entry, machine-readable registry](docs/agda_lean_foundational_mapping.tsv)
-distinguish proof-relevant Agda \`Set\` from Lean \`Type\` and \`Prop\`, and
+distinguish proof-relevant Agda `Set` from Lean `Type` and `Prop`, and
 classify dependent functions, records, data, equality eliminators, arithmetic,
 axioms, quotients and Cubical features by their required semantic bridges.
 It covers all 13 upstream lean2agda foundation gaps, with independent
 negative-control tests:
 
-\`\`\`bash
+```bash
 python3 scripts/check_foundational_mapping.py
 python3 -m unittest discover -s scripts -p 'test_check_foundational_mapping.py' -v
-\`\`\`
+```
 
-Every mapping remains \`candidate-only\` until an original-source,
+The dictionary now has **source-identity-bound declaration traces**
+through `scripts/declaration_quality_trace.py`, using actual emitted
+`-- Agda:`/dependency metadata and the existing Lean manifest where
+available. The reviewed cases
+`fixtures/bidirectional/identity_mapping_case.json` and
+`fixtures/bidirectional/jfixedpoint_mapping_case.json` bind eight
+selected original declarations to exact source hashes, expected
+project-local dependencies and construct IDs. Identity is wired to
+the Agda backend CI extraction; JFixedPoint reuses its existing
+Agda/Lean build, computation, axiom and dependency acceptance gate.
+Both generated JSON reports remain **observation-only**, not semantic
+proof or certified bidirectional round trip. See the
+[declaration-level handoff](docs/AGDA_LEAN_FOUNDATIONAL_MAPPING.md)
+for commands and open M01–M07 proof obligations.
+Every mapping remains `candidate-only` until an original-source,
 two-kernel, same-object correspondence proof exists; matching function
 names does not certify a translation. The authoritative mathematical
 gates remain in
