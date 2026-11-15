@@ -139,6 +139,27 @@ class DeclarationQualityTraceTests(unittest.TestCase):
         with self.assertRaisesRegex(trace.TraceError, "dependency boundary"):
             self.run_trace()
 
+    def test_six_jfixedpoint_proofs_bind_pinned_original_and_direct_edges(self):
+        self.case.write_bytes((ROOT / "fixtures" / "bidirectional" /
+                               "jfixedpoint_mapping_case.json").read_bytes())
+        self.source.write_bytes((ROOT / "test" / "agda" / "JFixedPoint.agda").read_bytes())
+        selected = json.loads(self.case.read_text(encoding="utf-8"))["declarations"]
+        emitted = ["import Lean"]
+        for declaration in selected:
+            emitted.extend([
+                "-- Agda: " + declaration["agda"],
+                "-- Mapping: Native",
+                "-- Direct dependencies: " + ", ".join(
+                    declaration["expected_project_dependencies"]),
+            ])
+        self.emitted.write_text("\\n".join(emitted) + "\\n", encoding="utf-8")
+        result = self.run_trace()
+        self.assertEqual(result["declaration_count"], 6)
+        self.assertEqual(result["certified_roundtrips"], 0)
+        self.assertEqual(len(result["declarations"]), 6)
+        self.assertTrue(all(r["reviewed_project_dependencies"] for r in
+                            result["declarations"]))
+
     def test_malformed_manifest_fails_closed(self):
         self.manifest.write_text("Identity.identity\ttype-direct\n", encoding="utf-8")
         with self.assertRaisesRegex(trace.TraceError, "wrong TSV width"):
