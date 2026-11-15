@@ -152,7 +152,7 @@ class DeclarationQualityTraceTests(unittest.TestCase):
                 "-- Direct dependencies: " + ", ".join(
                     declaration["expected_project_dependencies"]),
             ])
-        self.emitted.write_text("\\n".join(emitted) + "\\n", encoding="utf-8")
+        self.emitted.write_text("\n".join(emitted) + "\n", encoding="utf-8")
         result = self.run_trace()
         self.assertEqual(result["declaration_count"], 6)
         self.assertEqual(result["certified_roundtrips"], 0)
