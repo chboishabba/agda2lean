@@ -255,7 +255,7 @@ round trip semantically stable.
 ## 15 November 2026 — strict cycle and logical-relation quality tranche
 
 **Authority:** this is a source-implemented tranche on branch
-\`feat/bidi-quality-semantic-maxcut-20261115\`; kernel and pinned CI checks
+`feat/bidi-quality-semantic-maxcut-20261115`; kernel and pinned CI checks
 remain unpaid until executed. Do **not** call a candidate pair, source digest,
 successful subprocess, JSON boolean, or finite test a proof of equivalence.
 
@@ -273,11 +273,11 @@ adapter and a computation/erasure policy. A forward witness is
 F:A\to B,\qquad h_F:\forall a,\mathcal R(a,F(a)).
 \]
 
-The new \`lean/Agda2Lean/TranslationQuality.lean\` represents this as
-\`ForwardWitness\`. It defines and gives constructor-level soundness witnesses
-for products (\`ProdRel\`), options (\`OptionRel\`) and lists (\`ListRel\`).
-It also defines the function-space relation \`ArrowRel\` and makes observable
-computation preservation an explicit \`ObserverWitness\` obligation.
+The new `lean/Agda2Lean/TranslationQuality.lean` represents this as
+`ForwardWitness`. It defines and gives constructor-level soundness witnesses
+for products (`ProdRel`), options (`OptionRel`) and lists (`ListRel`).
+It also defines the function-space relation `ArrowRel` and makes observable
+computation preservation an explicit `ObserverWitness` obligation.
 A hand-written, non-vacuous Boolean constructor relation (`BoolMatch`) is a **sanity control only**.
 
 
@@ -292,28 +292,28 @@ This is deliberately weaker than a global isomorphism: a quotient,
 proof-irrelevant encoding or Cubical construction may have a logical
 correspondence without literal inverse maps. For the *chosen strict
 isomorphism fragment*, the separate native
-\`dashi_lean4/Integration/JMD/RoundTripFixedPoint.lean\` owns the
+`dashi_lean4/Integration/JMD/RoundTripFixedPoint.lean` owns the
 conditional inverse/idempotence mathematics. Neither module asserts that
 the actual compilers inhabit its hypotheses.
 
 The public quality outcome remains the independent vector
 \((S,D,C,A)\) — statement, dependency closure, computation, and
 axiom/trust — plus a provenance/checker status and a directional cycle
-status. \`S\` requires interpretation of the *elaborated* propositions.
-\`D\` must account for transitive essential dependencies.
-\`C\` requires an observer relation or computation proof, not one value.
-\`A\` compares the full assumption profiles, including \`sorryAx\`,
+status. `S` requires interpretation of the *elaborated* propositions.
+`D` must account for transitive essential dependencies.
+`C` requires an observer relation or computation proof, not one value.
+`A` compares the full assumption profiles, including `sorryAx`,
 choice, quotient, postulates, rewriting and univalence policy.
 Averaging these gates into one confidence score is forbidden: failing one
 required gate prohibits certification.
 
 ### Runner contract — additional strict mode
 
-\`scripts/run_bidirectional_cycle.py\` retains the old two-command mode
+`scripts/run_bidirectional_cycle.py` retains the old two-command mode
 as **observation only**, for backward compatibility. A new strict
-\`cycle_origin\` selects exactly one of:
+`cycle_origin` selects exactly one of:
 
-\`\`\`text
+```text
 agda-first:
   agda-check → agda-extract → agda2lean → lean-check →
   lean2agda → agda-check → correspondence
@@ -321,12 +321,12 @@ agda-first:
 lean-first:
   lean-check → lean-extract → lean2agda → agda-check →
   agda2lean → lean-check → correspondence
-\`\`\`
+```
 
-The strict plan must contain \`case_id\`, a \`source\` object with
-\`cwd\`, tracked \`path\` and 64-digit byte \`sha256\`; each stage must
+The strict plan must contain `case_id`, a `source` object with
+`cwd`, tracked `path` and 64-digit byte `sha256`; each stage must
 name an expected output artifact; every subsequent stage declares
-\`consumes: [{"from_step": N, "artifact": "relative/path"}]\` for a
+`consumes: [{"from_step": N, "artifact": "relative/path"}]` for a
 previously produced output. Every command still pins its local checkout
 by exact 40-digit Git SHA and explicit argv. The runner now checks:
 
@@ -339,9 +339,9 @@ by exact 40-digit Git SHA and explicit argv. The runner now checks:
 
 These are **necessary reproducibility conditions**, not proof that a
 command actually used its declared input, or that its output is a
-correct Lean/Agda translation. Both \`semantic_fixed_point_proved\` and
-\`independent_correspondence_verified\` remain **false** in every runner
-result. \`ordered_cycle_complete\` means only that the ordered subprocess
+correct Lean/Agda translation. Both `semantic_fixed_point_proved` and
+`independent_correspondence_verified` remain **false** in every runner
+result. `ordered_cycle_complete` means only that the ordered subprocess
 and artifact checks passed.
 
 A single plan executes one direction; **both** source directions and
@@ -349,17 +349,17 @@ both native kernel audits are needed for full bidirectional acceptance.
 
 ### Anti-forgery and test gates
 
-\`scripts/bidirectional_conformance.py\` now checks that each claimed
+`scripts/bidirectional_conformance.py` now checks that each claimed
 receipt uses the expected checker channel (Agda, Lean, or correspondence)
 and actual lowercase hexadecimal digests. Importantly, the JSON key
-\`authenticated_referee\` is **not an authentication channel**: user
-JSON can never set \`externally_authenticated=true\` or
-\`stable_verified=true\`. A complete collection of self-reported flags
-is only \`reported_all_gates\`, **not** a theorem.
+`authenticated_referee` is **not an authentication channel**: user
+JSON can never set `externally_authenticated=true` or
+`stable_verified=true`. A complete collection of self-reported flags
+is only `reported_all_gates`, **not** a theorem.
 
 Source-written regression suites:
 
-\`\`\`sh
+```sh
 python -m unittest discover -s scripts \
   -p 'test_run_bidirectional_cycle.py' -v
 python -m unittest discover -s scripts \
@@ -372,7 +372,7 @@ bash scripts/check-bidirectional-reference-maxcut.sh
 # Or run the independent Lean 4.28 and Agda 2.9 reference checks separately:
 bash scripts/check-translation-quality.sh
 scripts/cabal-agda-2.9.sh list-bin --flag agda-backend exe:agda2lean-agda
-\`\`\`
+```
 
 Coverage includes valid seven-stage fixture execution, missing return,
 missing artifact, invalid lineage, wrong SHA, untracked source, checkout
@@ -391,19 +391,19 @@ translation of a real source theorem.
 |---|---|---|
 | **R0** | 19 Agda feature cases / 12 Lean corpus examples yield 42 reviewed taxonomy candidate pairs, with 0 literal-feature matches and 0 certified pairs | Align source, translator, Lean and Agda version pins for one identical object |
 | **R1** | Strict source-bound observer, anti-forgery checks and regression source written | Execute exact-head Python tests; attach output and mutation receipts |
-| **R2/M00b** | Paired Agda/Lean proof-relevant \`ForwardWitness\`, \`ArrowRel\`, \`ProdRel\`, \`OptionRel\`/\`MaybeRel\`, \`ListRel\`, \`ObserverWitness\` source written | Lean 4.28 kernel check; instantiate the relation on actual emitted representations |
+| **R2/M00b** | Paired Agda/Lean proof-relevant `ForwardWitness`, `ArrowRel`, `ProdRel`, `OptionRel`/`MaybeRel`, `ListRel`, `ObserverWitness` source written | Lean 4.28 kernel check; instantiate the relation on actual emitted representations |
 | **R3** | Real-command full-cycle plan shape and artifact lineage now available | Execute native A→L→A and L→A→L on pinned same-source examples, not fake fixtures |
 | **R4/M01–M06** | Exact admission obligations identified; no real-cycle theorem evidence | Both kernels check; statement equivalence; direct/transitive dependencies; assumptions; computational observers |
 | **R5/M07–M10** | Positive structural relation template and fail-closed negative controls | Derive fixed point from real maps; add dependent/recursive cases; enforce classical/Cubical incompatibility |
 | **R6** | ITIR candidate-only interface unchanged | Source update → independently checked theorem matching → dependency-scoped reopening |
 
 Suggested **first actual source**: use the already pinned
-\`test/agda/Identity.agda\` (identity and \`identity-law\`) for the
+`test/agda/Identity.agda` (identity and `identity-law`) for the
 minimal core, and separately the existing stronger
-\`test/agda/JFixedPoint.agda\` for computation/proof and dependency
+`test/agda/JFixedPoint.agda` for computation/proof and dependency
 stress. They must not be replaced by hand-written lookalikes when
 claiming a translator quality result. Lean2Agda's profile-U scaffolds
-(\`--type-in-type\`, postulates, rewrite rules) are **discovery evidence
+(`--type-in-type`, postulates, rewrite rules) are **discovery evidence
 only**, never an accepted safe target.
 
 **Max-cut remains:** execute a real same-object cycle under the pinned
@@ -420,7 +420,7 @@ and [AGDA_LEAN_FOUNDATIONAL_MAPPING.md](AGDA_LEAN_FOUNDATIONAL_MAPPING.md).
 
 The old reviewed crosswalk records eight *feature taxonomy interactions*.
 It is not sufficient for a faithful source-level translation because its
-matching vocabulary does not answer whether \`Set\` means \`Prop\`, whether
+matching vocabulary does not answer whether `Set` means `Prop`, whether
 dependent pairs erase proof witnesses, or which computational reductions
 the target inherits.
 
@@ -428,41 +428,41 @@ The new mapping has **51 candidate entries**:
 
 | Mapping kind | Rows | Meaning |
 |---|---:|---|
-| \`fragment\` | 8 | Plausible restricted, proof-relevant core fragment |
-| \`bridge\` | 30 | Explicit representation/computation/axiom bridge required |
-| \`conflict\` | 10 | Foundational mismatch: do not promote by name matching |
-| \`no-direct\` | 3 | No general native counterpart; quarantine or restricted interpretation |
+| `fragment` | 8 | Plausible restricted, proof-relevant core fragment |
+| `bridge` | 30 | Explicit representation/computation/axiom bridge required |
+| `conflict` | 10 | Foundational mismatch: do not promote by name matching |
+| `no-direct` | 3 | No general native counterpart; quarantine or restricted interpretation |
 | **Certified** | **0** | A mapping is NOT a theorem |
 
 The registry covers *all 13* slugs in the external
-\`formalverification/lean2agda/docs/foundations/gap-catalog.md\` and assigns
-per-row \`M03\` statement, \`M04\` axioms, \`M05\` dependencies, \`M06\`
-computation or \`M10\` incompatibility obligations, together with an Agda
+`formalverification/lean2agda/docs/foundations/gap-catalog.md` and assigns
+per-row `M03` statement, `M04` axioms, `M05` dependencies, `M06`
+computation or `M10` incompatibility obligations, together with an Agda
 safe-profile or U-only caveat.
 
-**Non-negotiable sort boundary:** Agda \`Set ℓ\` naturally maps to Lean
-\`Type u\` for a carefully level-solved fragment; Agda \`Prop ℓ\` does
-not unconditionally map to Lean impredicative \`Prop\`. Agda
-\`Σ a : A, P a\` in \`Set\` does not automatically equal Lean
-\`Subtype P\` (proof of \`P a\` erased into \`Prop\`). Cubical
-\`Path/PathP\`, UIP/K, Lean quotient computation, and Agda REWRITE need
+**Non-negotiable sort boundary:** Agda `Set ℓ` naturally maps to Lean
+`Type u` for a carefully level-solved fragment; Agda `Prop ℓ` does
+not unconditionally map to Lean impredicative `Prop`. Agda
+`Σ a : A, P a` in `Set` does not automatically equal Lean
+`Subtype P` (proof of `P a` erased into `Prop`). Cubical
+`Path/PathP`, UIP/K, Lean quotient computation, and Agda REWRITE need
 separate interpretations and negative controls. This finding also
-justifies the prior correction of the Lean \`ForwardWitness.relation\`
-codomain from \`Prop\` to proof-relevant \`Type\`.
+justifies the prior correction of the Lean `ForwardWitness.relation`
+codomain from `Prop` to proof-relevant `Type`.
 
 **Reproducible metadata gate:**
 
-\`\`\`sh
+```sh
 python3 scripts/check_foundational_mapping.py
 python3 -m unittest discover -s scripts \
   -p 'test_check_foundational_mapping.py' -v
-\`\`\`
+```
 
 The new validator rejects wrong/missing stable anchors, unreviewed profile
 values, unexpected foundational slugs, missing source gaps, duplicate IDs,
-empty obligations and *any* attempt to replace \`candidate-only\` with a
+empty obligations and *any* attempt to replace `candidate-only` with a
 claim of certification. Tests cover falsified Set/Prop and Subtype
-boundaries. It reports \`certified=0\` by construction.
+boundaries. It reports `certified=0` by construction.
 
 **R0 extension (taxonomy mapping only) is source-complete, not
 independently kernel-certified.** Actual M03–M06 cannot be paid by this
@@ -470,3 +470,49 @@ dictionary; they require per-generated-declaration source identity,
 elaborated statement interpretation, independent checker output,
 dependency/axiom comparison and computation witnesses. The real
 first-instance R3/R4 maximum cut remains open.
+
+---
+
+## 16 November 2026 — declaration-level mapping and existing kernel gate reuse
+
+The 51-entry foundational map is now used by a source-bound
+`scripts/declaration_quality_trace.py` observer. It joins reviewed
+per-declaration construct IDs to the **existing emitted Lean declaration
+headers**, original-source SHA256, recorded direct dependencies, optionally
+the elaborated Agda CBOR and emission diagnostics digests, and optionally
+the existing Lean `Manifest.lean` type/value/axiom observations.
+
+Source-pinned reviewed cases: `fixtures/bidirectional/identity_mapping_case.json`
+(2 declarations, 1 original project-local dependency) and
+`fixtures/bidirectional/jfixedpoint_mapping_case.json` (six original proof
+declarations and their previously audited expected dependencies). The
+`scripts/check-jfixedpoint.sh` pipeline reuses its **existing** independent
+Lean 4.28 build/axiom/compute/dependency verification, and then emits a
+separate `jfixedpoint.foundation-observation.json` with the mapping IDs.
+The Agda backend CI job likewise emits a real `Identity.generated.lean`
+before attaching the Identity feature map and digests.
+
+**The distinction:** candidate feature IDs are reviewed expectations;
+`-- Agda:` and `-- Direct dependencies:` are emitted annotation observations;
+compiler output/IR/manifest SHA256 hashes establish reproducibility, not
+statement equivalence. Reconstruction and incomplete emitter annotations
+have separate observation-only statuses; conflicts quarantine. No JSON
+flag, syntax match, successful kernel compilation, or dependency equality
+automatically establishes the cross-theory relation.
+
+The 14 additional declaration-referee tests were executed locally and passed
+against synthetic Lean emitter/manifest content and a synthetic registry
+stand-in. The exact-head CI tests using the genuine 51-row registry and
+pinned native compilers, and both real-direction translation cycles, remain
+unverified in this working session.
+
+| Max-cut | Now | Unpaid original proof |
+|---|---|---|
+| R0 / construct dictionary | 51 reviewed rows, 13 gap slugs, 8 selected declaration bindings | Per-object independent semantic mapping |
+| R1 / observability | Source, IR/output, dependencies and reporter modes recorded | Authenticated checker-to-source evidence and actual CI receipts |
+| R2 / M03 | Reference logical relations and selected declaration labels | One checked relation between actual emitted and original *elaborated* statements |
+| M04 / M05 / M06 | Existing JFixedPoint axiom/dependency/compute gate reused | Complete paired trust and observer correspondence |
+| M01 / M02 / M07 | Conditional inverse laws still source-written | Actual bidirectional translator maps and inverse witnesses |
+
+**Do not decrement the real M01–M07 endpoint count** merely because
+a declaration acquired reviewed construct IDs or an emitted metadata hash.
