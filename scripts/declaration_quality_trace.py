@@ -128,7 +128,9 @@ def checked_case(case: dict, registry: dict) -> list[dict]:
 
 def build_trace(*, case_path: pathlib.Path, source: pathlib.Path,
                 emitted: pathlib.Path, registry_path: pathlib.Path,
-                manifest: pathlib.Path | None = None) -> dict:
+                manifest: pathlib.Path | None = None,
+                source_ir: pathlib.Path | None = None,
+                diagnostics: pathlib.Path | None = None) -> dict:
     registry = load_registry(registry_path)
     case = json.loads(case_path.read_text(encoding="utf-8"))
     expected = checked_case(case, registry)
@@ -173,6 +175,8 @@ def build_trace(*, case_path: pathlib.Path, source: pathlib.Path,
         "registry_sha256": digest(registry_path),
         "source_sha256": source_sha,
         "emitted_lean_sha256": emitted_sha,
+        "agda_elaborated_ir_sha256": digest(source_ir) if source_ir else None,
+        "emitter_diagnostics_sha256": digest(diagnostics) if diagnostics else None,
         "lean_manifest_sha256": digest(manifest) if manifest else None,
         "module": case["module"],
         "declarations": rows,
@@ -192,11 +196,14 @@ def main() -> int:
                    default=pathlib.Path(__file__).resolve().parents[1] /
                    "docs/agda_lean_foundational_mapping.tsv")
     p.add_argument("--manifest", type=pathlib.Path)
+    p.add_argument("--source-ir", type=pathlib.Path)
+    p.add_argument("--diagnostics", type=pathlib.Path)
     p.add_argument("--out", required=True, type=pathlib.Path)
     args = p.parse_args()
     report = build_trace(case_path=args.case, source=args.source,
                          emitted=args.emitted, registry_path=args.registry,
-                         manifest=args.manifest)
+                         manifest=args.manifest, source_ir=args.source_ir,
+                         diagnostics=args.diagnostics)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     # Write atomically: no partial observation report on validation failure.
     tmp = args.out.with_name(f".{args.out.name}.tmp")
