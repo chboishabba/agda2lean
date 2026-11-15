@@ -16,27 +16,28 @@ The inverse-law/fixed-point owner is
 
 namespace Agda2Lean.TranslationQuality
 
-universe u v w x
+universe u v w x y z
 
-/-- A semantic relation and a proof that a particular forward map respects it.
-    This is weaker than isomorphism: proof-irrelevant or quotient encodings
-    may admit only a logical relation, not literal inverse functions. -/
+/-- A *proof-relevant* relation and a witness that a forward map respects it.
+    Lean Type is used deliberately: an arbitrary Agda Set witness must not be
+    silently erased into Lean Prop. Propositional/quotient encodings require
+    a separate reviewed adapter, not a weaker relation chosen post hoc. -/
 structure ForwardWitness (A : Type u) (B : Type v) where
-  relation : A → B → Prop
+  relation : A → B → Type y
   translate : A → B
   preserved : ∀ a : A, relation a (translate a)
 
 /-- A concrete witness, not declaration-name equality, supplies the
-    proposition needed by a semantic correspondence check. -/
-theorem translation_related {A : Type u} {B : Type v}
+    relation witness needed by a semantic correspondence check. -/
+def translation_related {A : Type u} {B : Type v}
     (r : ForwardWitness A B) (a : A) :
     r.relation a (r.translate a) :=
   r.preserved a
 
 /-- Pointwise relational interpretation of dependent-free functions. -/
 def ArrowRel {A : Type u} {B : Type v} {C : Type w} {D : Type x}
-    (RA : A → B → Prop) (RB : C → D → Prop)
-    (f : A → C) (g : B → D) : Prop :=
+    (RA : A → B → Type y) (RB : C → D → Type z)
+    (f : A → C) (g : B → D) :=
   ∀ a b, RA a b → RB (f a) (g b)
 
 /-- An observer-equivalence obligation is explicit and cannot be inferred
@@ -55,9 +56,9 @@ theorem observer_preservation {A : Type u} {B : Type v} {C : Type w}
 
 /-- The logical relation for a pair is the conjunction of field relations. -/
 def ProdRel {A : Type u} {B : Type v} {C : Type w} {D : Type x}
-    (RA : A → B → Prop) (RB : C → D → Prop)
-    (p : A × C) (q : B × D) : Prop :=
-  RA p.1 q.1 ∧ RB p.2 q.2
+    (RA : A → B → Type y) (RB : C → D → Type z)
+    (p : A × C) (q : B × D) : Type (max y z) :=
+  RA p.1 q.1 × RB p.2 q.2
 
 def product {A : Type u} {B : Type v} {C : Type w} {D : Type x}
     (r : ForwardWitness A B) (s : ForwardWitness C D) :
@@ -70,7 +71,7 @@ def product {A : Type u} {B : Type v} {C : Type w} {D : Type x}
 
 /-- The option relation preserves constructor choice and relates payloads. -/
 inductive OptionRel {A : Type u} {B : Type v}
-    (R : A → B → Prop) : Option A → Option B → Prop where
+    (R : A → B → Type y) : Option A → Option B → Type y where
   | none : OptionRel R none none
   | some {a : A} {b : B} : R a b →
       OptionRel R (some a) (some b)
@@ -87,12 +88,12 @@ def option {A : Type u} {B : Type v}
 
 /-- The list relation preserves length, constructor shape and every element. -/
 inductive ListRel {A : Type u} {B : Type v}
-    (R : A → B → Prop) : List A → List B → Prop where
+    (R : A → B → Type y) : List A → List B → Type y where
   | nil : ListRel R [] []
   | cons {a : A} {b : B} {xs : List A} {ys : List B} :
       R a b → ListRel R xs ys → ListRel R (a :: xs) (b :: ys)
 
-theorem list_map_related {A : Type u} {B : Type v}
+def list_map_related {A : Type u} {B : Type v}
     (r : ForwardWitness A B) : ∀ xs : List A,
       ListRel r.relation xs (xs.map r.translate)
   | [] => .nil
@@ -111,15 +112,23 @@ theorem list_length_observer {A : Type u} {B : Type v}
     xs.length = (xs.map r.translate).length := by
   simp
 
-/-- Sanity control: an explicitly supplied equality interpretation really
-    yields a witness on the finite Bool carrier. This is hand-written and is
-    NOT an assertion about generated code. -/
-def boolIdentity : ForwardWitness Bool Bool where
-  relation := Eq
-  translate := id
-  preserved := by intro b; rfl
+/-- A proof-relevant, constructor-faithful relation for the finite Boolean
+    carrier. Unlike an always-True relation it rejects false ↔ true. -/
+inductive BoolMatch : Bool → Bool → Type where
+  | true : BoolMatch true true
+  | false : BoolMatch false false
 
-example : ListRel Eq [true, false] [true, false] :=
+/-- Hand-written reference control, NOT the output of either translator. -/
+def boolIdentity : ForwardWitness Bool Bool where
+  relation := BoolMatch
+  translate := id
+  preserved := by
+    intro b
+    cases b with
+    | false => exact .false
+    | true => exact .true
+
+example : ListRel BoolMatch [true, false] [true, false] :=
   list_map_related boolIdentity [true, false]
 
 end Agda2Lean.TranslationQuality
