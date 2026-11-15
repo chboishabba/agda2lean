@@ -83,6 +83,10 @@ jobs:
           grep -q -- "-- Mapping: Reconstruct" build/agda-ir/LocalRewrite.lean
       - name: Generate, build, and audit JFixedPoint
         run: bash scripts/check-jfixedpoint.sh
+      - name: Typecheck proof-relevant Agda semantic relation
+        run: |
+          cabal --project-file=cabal.project.agda-2.9 run -fagda-backend agda2lean-agda -- \
+            -j2 test/agda/TranslationQuality.agda
       - name: Kernel-check compositional quality relations
         run: bash scripts/check-translation-quality.sh
 
