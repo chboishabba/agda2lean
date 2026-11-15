@@ -15,6 +15,27 @@ Agda elaboration
     -> independent Lean validation
 ```
 
+## Agda ↔ Lean foundational map
+
+The [core construct/function dictionary](docs/AGDA_LEAN_FOUNDATIONAL_MAPPING.md)
+and its [51-entry, machine-readable registry](docs/agda_lean_foundational_mapping.tsv)
+distinguish proof-relevant Agda \`Set\` from Lean \`Type\` and \`Prop\`, and
+classify dependent functions, records, data, equality eliminators, arithmetic,
+axioms, quotients and Cubical features by their required semantic bridges.
+It covers all 13 upstream lean2agda foundation gaps, with independent
+negative-control tests:
+
+\`\`\`bash
+python3 scripts/check_foundational_mapping.py
+python3 -m unittest discover -s scripts -p 'test_check_foundational_mapping.py' -v
+\`\`\`
+
+Every mapping remains \`candidate-only\` until an original-source,
+two-kernel, same-object correspondence proof exists; matching function
+names does not certify a translation. The authoritative mathematical
+gates remain in
+[the bidirectional max-cut ledger](docs/BIDIRECTIONAL_ROUNDTRIP_MAX_CUT.md).
+
 ## Current implementation
 
 The first two vertical tranches provide:
