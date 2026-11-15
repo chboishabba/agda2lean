@@ -172,6 +172,16 @@ class LocalCycleTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "prior stage artifact changed"):
             m.execute(plan, base=self.root)
 
+    def test_strict_cycle_rejects_final_stage_artifact_mutation(self):
+        plan = self.strict_plan()
+        final = plan["steps"][-1]["argv"][2]
+        plan["steps"][-1]["argv"][2] = (
+            "from pathlib import Path; "
+            "Path('build/roundtrip-0.txt').write_text('late-tamper'); " + final
+        )
+        with self.assertRaisesRegex(ValueError, "prior stage artifact changed"):
+            m.execute(plan, base=self.root)
+
     def test_strict_cycle_rejects_tracked_source_mutation(self):
         plan = self.strict_plan()
         original = plan["steps"][0]["argv"][2]
