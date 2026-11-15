@@ -111,4 +111,12 @@ progress_run "jfixedpoint / dependency correspondence receipt" \
     --expected "${root_dir}/comparison/receipts/jfixedpoint.project-dependencies.tsv" \
     --output "${receipt}"
 
+progress_run "jfixedpoint / source-bound six-theorem foundational mapping" \
+  python3 "${root_dir}/scripts/declaration_quality_trace.py" \
+    --case "${root_dir}/fixtures/bidirectional/jfixedpoint_mapping_case.json" \
+    --source "${root_dir}/test/agda/JFixedPoint.agda" \
+    --emitted "${jfixedpoint_source}" \
+    --manifest "${manifest}" \
+    --out "${gate_root}/jfixedpoint.foundation-observation.json"
+
 printf 'jfixedpoint gate passed: executable definitions, original public surface, computation, no axioms, deterministic regeneration\n'

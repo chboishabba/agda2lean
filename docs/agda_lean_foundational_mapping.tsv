@@ -1,0 +1,52 @@
+id	domain	agda_construct	lean_construct	correspondence	target_profiles	semantic_caveat	proof_obligations	certification	upstream_gap
+sort.set	universes	Set ℓ	Type u / Sort (u+1)	fragment	K,CC,CU	predicative data universes align on selected levels; solve level constraints and preserve cumulativity	M03,M06	candidate-only	
+sort.proof	universes	Prop ℓ	Prop / Sort 0	conflict	K,CC,CU	Agda predicative Prop levels versus Lean impredicative Prop; cannot globally equate	M03,M04	candidate-only	impredicative-prop
+sort.omega	universes	Setω	no uniform Type u counterpart	no-direct	K,CC,CU	Agda sort beyond all Set ℓ; no blanket universe identification	M03	candidate-only	universe-levels
+sort.level	universes	Level; lzero; lsuc; _⊔_	Level; 0; succ; max / imax	bridge	K,CC,CU	Lean imax at Prop has no direct Agda analogue; constrain level substitutions	M03,M06	candidate-only	universe-levels
+sort.type-in-type	universes	--type-in-type	Type u (predicative)	conflict	U-only	unsafe Agda flag collapses universes and cannot witness soundness	M04,M10	candidate-only	
+pi.dependent	functions	(x : A) → B x	(x : A) → B x / forall x, B x	fragment	K,CC,CU	dependent products correspond only under a sound relation on domain and codomain	M03,M06	candidate-only	
+pi.implicit	functions	{x : A} → B	{x : A} → B	bridge	K,CC,CU	elaboration visibility and implicit insertion are not part of kernel equality	M03,M06	candidate-only	
+pi.instance	functions	{{x : C}} → B	[x : C] → B	bridge	K,CC,CU	Agda instance search and Lean typeclass synthesis differ	M03,M06	candidate-only	
+lambda.abs	functions	λ x → t	fun x => t	fragment	K,CC,CU	beta and eta conversion must be witnessed at elaborated terms	M03,M06	candidate-only	
+app.application	functions	f x	f x	fragment	K,CC,CU	preserve implicit arguments and dependency context	M03,M06	candidate-only	
+let.zeta	functions	let x = t in u	let x := t; u	bridge	K,CC,CU	definitional zeta computation aligns but sharing/extraction may differ	M06	candidate-only	projections-and-let
+arrow.funext	functions	function extensionality (not uniform builtin theorem)	funext	bridge	K,CC,CU	axiom or principle and computation preservation must be tracked	M04,M06	candidate-only	
+record.structure	data	record; constructor; field	structure; constructor; field	bridge	K,CC,CU	record eta and recursive structure rules differ; field projections need witnesses	M03,M06	candidate-only	structure-eta,projections-and-let
+pair.prod	data	record Pair A B with fields first second	Prod A B / A × B	fragment	K,CC,CU	product constructor and projections have native proof-relevant reference lemmas	M03,M06	candidate-only	
+sigma.dependent	data	Σ A B (record dependent pair)	Sigma A B	bridge	K,CC,CU	dependent pair representation and projection reduction must align	M03,M06	candidate-only	
+subtype.proof	data	Σ A (λ x → P x) in Set	Subtype P where P : A → Prop	conflict	K,CC,CU	Agda proof-relevant second field cannot be silently erased to Lean Prop	M03,M04,M06	candidate-only	
+data.inductive	data	data D where constructors	inductive D where constructors	bridge	K,CC,CU	strict positivity; constructor telescope; mutual and nested induction	M03,M06	candidate-only	
+data.mutual	data	mutual definitions	mutual / nested inductives	bridge	K,CC,CU	motives and recursor compilation not one-to-one	M03,M06	candidate-only	nested-and-mutual-inductives
+data.recursion	data	pattern matching / termination checker	structural recursion / recursors / termination_by	bridge	K,CC,CU	termination witnesses and iota reductions differ	M04,M06	candidate-only	nested-and-mutual-inductives
+data.unit	data	⊤ / record with one inhabitant	PUnit / Unit / True	bridge	K,CC,CU	must distinguish Type-valued Unit from Prop-valued True	M03,M06	candidate-only	
+data.empty	data	⊥ / empty data type in Set	Empty / False	bridge	K,CC,CU	Type-valued Empty differs from proof-irrelevant Prop False	M03,M06	candidate-only	
+data.bool	data	Bool; true; false	Bool; true; false	fragment	K,CC,CU	constructor-faithful BoolMatch control; not an emitted-code proof	M03,M06	candidate-only	
+data.maybe	data	Maybe; nothing; just	Option; none; some	fragment	K,CC,CU	MaybeRel and OptionRel reference map constructors with explicit payload relation	M03,M06	candidate-only	
+data.list	data	List; []; _∷_	List; nil; cons	fragment	K,CC,CU	ListRel reference preserves list shape and pointwise payload relation	M03,M06	candidate-only	
+data.nat	arithmetic	Nat; zero; suc	Nat; zero; succ	bridge	K,CC,CU	constructor semantics align but native arithmetic and numeral reduction must be checked	M03,M06	candidate-only	literals
+nat.add	arithmetic	_+_ (Nat)	Nat.add	bridge	K,CC,CU	compare numeral and symbolic reduction in both kernels	M06	candidate-only	
+nat.mul	arithmetic	_*_ (Nat)	Nat.mul	bridge	K,CC,CU	builtin/compiler computation and symbolic reduction may differ	M06	candidate-only	
+nat.sub	arithmetic	natural monus / subtraction	Nat.sub	bridge	K,CC,CU	argument order and primitive reduction can diverge; independent oracle needed	M06	candidate-only	literals
+nat.gcd	arithmetic	gcd (library implementation)	Nat.gcd	bridge	K,CC,CU	Lean kernel arithmetic optimization differs; symbolic and ground tests	M06	candidate-only	literals
+integer.int	arithmetic	Int	Int	bridge	K,CC,CU	constructor representation of negative values and normalization differ	M03,M06	candidate-only	
+string.string	arithmetic	String	String	bridge	K,CC,CU	Unicode encoding and literal/constructor computation require observers	M03,M06	candidate-only	
+char.char	arithmetic	Char	Char	bridge	K,CC,CU	validate valid scalar range and literal encoding across libraries	M03,M06	candidate-only	
+eq.intro	equality	_≡_; refl	Eq; rfl	bridge	K,CC,CU	reflexivity aligns but proof relevance and elimination differ	M03,M06	candidate-only	
+eq.elim	equality	J / subst / equality pattern matching	Eq.rec / Eq.ndrec / substitution	bridge	K,CC,CU	K-like reduction on variable proofs cannot be taken as Agda definitional equality	M03,M04,M06	candidate-only	k-and-uip
+eq.uip	equality	K / UIP (profile dependent)	Lean proof-irrelevant Eq; UIP	conflict	CC,CU	Cubical-compatible Agda lacks unrestricted K; requires an explicit h-set witness	M03,M04,M10	candidate-only	k-and-uip
+prop.and	logic	product of propositions (Set or Prop)	And : Prop → Prop → Prop	bridge	K,CC,CU	proof-relevant product is not Lean Prop-valued conjunction by default	M03,M04,M06	candidate-only	large-elimination
+prop.or	logic	sum / disjunction (Set or Prop)	Or : Prop → Prop → Prop	bridge	K,CC,CU	disjunction elimination into data is restricted in Lean Prop	M03,M06	candidate-only	large-elimination
+prop.exists	logic	Σ / existential family in Set or Prop	Exists : (A → Prop) → Prop	conflict	K,CC,CU	Lean Exists is proof-irrelevant; Agda Σ returns proof-relevant data	M03,M04,M06	candidate-only	large-elimination
+prop.nonempty	logic	inhabited family / truncation library	Nonempty A : Prop	bridge	K,CC,CU	truncation and elimination policies must be explicit	M03,M06	candidate-only	
+decidable.dec	logic	Dec P	Decidable P	bridge	K,CC,CU	Lean Decidable drives Prop proofs; Agda Dec typically carries Set-level evidence	M03,M04,M06	candidate-only	decidable-and-noncomputable
+irrelevance	logic	erased / irrelevant arguments and Agda Prop	definitional proof irrelevance of Lean Prop	conflict	K,CC,CU	erasability and proof irrelevance are different semantic contracts	M03,M04,M06	candidate-only	proof-irrelevance
+propext	axioms	proof of proposition extensionality or axiom parameter	propext	bridge	K,CC,CU	track assumption provenance; cannot silently assume classical principle	M04	candidate-only	axioms
+choice	axioms	explicit choice parameter, possibly restricted	Classical.choice	conflict	CU	unrestricted choice is incompatible with univalence; may only translate under restricted profile	M04,M10	candidate-only	axioms
+quotient	axioms	set quotient HIT / parameterized quotient	Quot / Quotient / Quot.sound	conflict	K,CC,CU	primitive Lean Quot.lift reduction differs from propositional/cubical quotients	M03,M04,M06	candidate-only	quotients
+cubical.path	cubical	Path / PathP with composition	Eq / HEq	no-direct	CU	interval and path computation have no unrestricted Lean CIC counterpart	M03,M04,M10	candidate-only	
+cubical.univalence	cubical	ua and univalence in Cubical Agda	no native univalence rule	no-direct	CU	requires explicit restricted interpretation or quarantine	M03,M04,M10	candidate-only	
+rewrite	computation	REWRITE pragma / --rewriting	simp / reduction / custom theorem rewrite	conflict	K,CC,CU	Agda user rewrite rules change conversion; Lean simp is tactic not kernel reduction	M03,M04,M06	candidate-only	
+safety.axioms	trust	postulate / module parameter	axiom / opaque theorem / sorryAx	bridge	K,CC,CU	compare transitive assumption ledger; reject sorry and unreviewed axioms	M04,M05	candidate-only	axioms,trust-escape-hatches
+safety.unsafe	trust	TERMINATING / NON_TERMINATING / unsafe options	partial / unsafe / implemented_by / native_decide	conflict	K,CC,CU	escape hatches require casewise refusal or explicit trusted boundary	M04,M10	candidate-only	trust-escape-hatches
+proof.theorem	trust	definition inhabiting a type (proof object)	theorem in Prop	bridge	K,CC,CU	Lean theorem proof irrelevance cannot be assumed for Agda Set witness	M03,M04	candidate-only	
+runtime.opaque	trust	abstract / opaque definitions	opaque / theorem irreducibility	bridge	K,CC,CU	reducibility differences affect computation and dependency closure	M05,M06	candidate-only	

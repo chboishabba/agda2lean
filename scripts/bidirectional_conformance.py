@@ -22,6 +22,23 @@ REQUIRED = ("source_agda_checked", "lean_checked", "lean_back_checked",
             "dependencies_preserved", "computation_preserved",
             "source_identity_preserved", "no_new_axioms",
             "no_sorry", "no_unresolved_obligations")
+# Provenance channel constraints are necessary, but never sufficient, for
+# semantic proof. All JSON receipts remain caller-controlled observations.
+CHECKER_FOR_GATE = {
+    "source_agda_checked": "agda",
+    "lean_checked": "lean",
+    "lean_back_checked": "lean",
+    "agda_back_checked": "agda",
+    "forward_correspondence_checked": "correspondence",
+    "backward_correspondence_checked": "correspondence",
+    "assumptions_preserved": "correspondence",
+    "dependencies_preserved": "correspondence",
+    "computation_preserved": "correspondence",
+    "source_identity_preserved": "correspondence",
+    "no_new_axioms": "correspondence",
+    "no_sorry": "lean",
+    "no_unresolved_obligations": "correspondence",
+}
 PROFILES = {"K", "CC", "CU"}
 TIERS = {"T0", "T1", "T2", "T3"}
 
@@ -154,25 +171,27 @@ def validate_roundtrip(row):
         gate=receipt.get("gate")
         if gate not in REQUIRED or receipt.get("status")!="accepted":
             continue
-        if receipt.get("checker") not in {"agda","lean","correspondence"}:
+        if receipt.get("checker") != CHECKER_FOR_GATE[gate]:
             continue
-        if not isinstance(receipt.get("source_digest"),str) or len(receipt["source_digest"])!=64:
-            continue
-        if not isinstance(receipt.get("artifact_digest"),str) or len(receipt["artifact_digest"])!=64:
+        if not all(isinstance(receipt.get(field), str)
+                   and len(receipt[field]) == 64
+                   and all(ch in "0123456789abcdef" for ch in receipt[field])
+                   for field in ("source_digest", "artifact_digest")):
             continue
         if not isinstance(receipt.get("checker_revision"),str) or not receipt["checker_revision"]:
             continue
         witnessed.add(gate)
     # A manifest is *untrusted*. Proof flags are not enough. Only externally
     # authenticated checker receipts may turn these into verified claims.
-    authenticated=row.get("authenticated_referee") is True
+    # No in-band JSON flag authenticates the claimed checker, even when it is
+    # literally named "authenticated_referee". Authentication is an action
+    # of a separate local referee invoking the actual pinned kernels.
     missing=[name for name in REQUIRED if not statuses[name] or name not in witnessed]
-    stable = not missing and authenticated
     return {"case_id":row["case_id"],"receipt_complete":not missing,
-      "externally_authenticated":authenticated,
+      "externally_authenticated":False,
       "eligible_for_independent_referee":not missing,
       "stable_verified":False, # JSON must not mint kernel authority
-      "reported_all_gates":stable,
+      "reported_all_gates":not missing,
       "missing_or_unwitnessed":missing,
       "authority":"untrusted-observation-only",
       "roundtrip_semantic_hash":fingerprint({

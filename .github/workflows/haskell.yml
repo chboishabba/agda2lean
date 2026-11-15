@@ -32,6 +32,15 @@ jobs:
       - run: cabal test all --test-show-details=direct
       - name: Test deterministic project planning
         run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -v test/test_a2l_project.py
+      - name: Audit Agda-Lean foundation mapping and negative controls
+        run: |
+          PYTHONDONTWRITEBYTECODE=1 python3 scripts/check_foundational_mapping.py
+          PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts -p 'test_check_foundational_mapping.py' -v
+          PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts -p 'test_declaration_quality_trace.py' -v
+      - name: Test bidirectional fail-closed quality contracts
+        run: |
+          PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts -p 'test_bidirectional_conformance.py' -v
+          PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts -p 'test_run_bidirectional_cycle.py' -v
 
   agda-backend:
     runs-on: ubuntu-latest
@@ -77,8 +86,49 @@ jobs:
             --diagnostics build/agda-ir/LocalRewrite.diagnostics.tsv \
             --allow-reconstruction
           grep -q -- "-- Mapping: Reconstruct" build/agda-ir/LocalRewrite.lean
+      - name: Observe real emitted Identity declarations and attach mapping IDs
+        run: |
+          cabal --project-file=cabal.project.agda-2.9 run agda2lean -- emit-lean \
+            --input build/agda-ir/Identity/module.a2l.cbor \
+            --lean-output build/agda-ir/Identity.generated.lean \
+            --diagnostics build/agda-ir/Identity.diagnostics.tsv \
+            --allow-reconstruction
+          python3 scripts/declaration_quality_trace.py \
+            --case fixtures/bidirectional/identity_mapping_case.json \
+            --source test/agda/Identity.agda \
+            --emitted build/agda-ir/Identity.generated.lean \
+            --source-ir build/agda-ir/Identity/module.a2l.cbor \
+            --diagnostics build/agda-ir/Identity.diagnostics.tsv \
+            --out build/agda-ir/Identity.foundation-observation.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          receipt = json.loads(Path('build/agda-ir/Identity.foundation-observation.json').read_text())
+          assert receipt['declaration_count'] == 2
+          assert receipt['certified_roundtrips'] == 0
+          assert receipt['semantic_correspondence_proved'] is False
+          assert receipt['independent_lean_kernel_receipt_authenticated'] is False
+          PY
       - name: Generate, build, and audit JFixedPoint
         run: bash scripts/check-jfixedpoint.sh
+      - name: Typecheck proof-relevant Agda semantic relation
+        run: |
+          cabal --project-file=cabal.project.agda-2.9 run -fagda-backend agda2lean-agda -- \
+            -j2 test/agda/TranslationQuality.agda
+      - name: Kernel-check compositional quality relations
+        run: bash scripts/check-translation-quality.sh
+      - name: Upload source-bound quality and dependency observations
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a2l-quality-observations
+          if-no-files-found: warn
+          path: |
+            build/agda-ir/Identity.foundation-observation.json
+            build/agda-ir/Identity.diagnostics.tsv
+            build/jfixedpoint-gate/jfixedpoint.foundation-observation.json
+            build/jfixedpoint-gate/jfixedpoint.correspondence.tsv
+            build/jfixedpoint-gate/jfixedpoint.manifest.tsv
 
   dashi-mirror-smoke:
     runs-on: ubuntu-latest

@@ -56,19 +56,21 @@ class ConformanceTests(unittest.TestCase):
     def test_fake_checks_do_not_mint_proof(self):
         row={"case_id":"fake","checks":{k:True for k in mod.REQUIRED},
              "checker_receipts":[{"gate":k,"status":"accepted",
-               "checker":"lean","source_digest":"a"*64,
+               "checker":mod.CHECKER_FOR_GATE[k],"source_digest":"a"*64,
                "artifact_digest":"b"*64,"checker_revision":"v0"}
               for k in mod.REQUIRED],
              "authenticated_referee":True}
         result=mod.validate_roundtrip(row)
         self.assertTrue(result["receipt_complete"])
+        self.assertTrue(result["reported_all_gates"])
+        self.assertFalse(result["externally_authenticated"])
         self.assertFalse(result["stable_verified"])
         self.assertEqual(result["authority"],"untrusted-observation-only")
 
     def test_missing_computation_receipt_rejected(self):
         checks={k:True for k in mod.REQUIRED}
         row={"case_id":"incomplete","checks":checks,
-             "checker_receipts":[{"gate":k,"status":"accepted","checker":"lean",
+             "checker_receipts":[{"gate":k,"status":"accepted","checker":mod.CHECKER_FOR_GATE[k],
                "source_digest":"a"*64,"artifact_digest":"b"*64,
                "checker_revision":"v0"} for k in mod.REQUIRED
                  if k!="computation_preserved"]}
@@ -113,6 +115,36 @@ class ConformanceTests(unittest.TestCase):
     def test_canonical_order_independent(self):
         self.assertEqual(mod.fingerprint({"a":1,"b":2}),
                          mod.fingerprint({"b":2,"a":1}))
+
+
+    def test_wrong_checker_attribution_is_rejected(self):
+        row = {"case_id": "wrong-checker",
+               "checks": {k: True for k in mod.REQUIRED},
+               "checker_receipts": [
+                   {"gate": k, "status": "accepted", "checker": "lean",
+                    "source_digest": "a" * 64, "artifact_digest": "b" * 64,
+                    "checker_revision": "v1"}
+                   for k in mod.REQUIRED],
+               "authenticated_referee": True}
+        result = mod.validate_roundtrip(row)
+        self.assertIn("source_agda_checked", result["missing_or_unwitnessed"])
+        self.assertIn("computation_preserved", result["missing_or_unwitnessed"])
+        self.assertFalse(result["receipt_complete"])
+        self.assertFalse(result["stable_verified"])
+
+    def test_nonhex_digest_cannot_be_witnessed(self):
+        row = {"case_id": "not-a-digest",
+               "checks": {k: True for k in mod.REQUIRED},
+               "checker_receipts": [
+                   {"gate": k, "status": "accepted",
+                    "checker": mod.CHECKER_FOR_GATE[k],
+                    "source_digest": "g" * 64, "artifact_digest": "b" * 64,
+                    "checker_revision": "v1"}
+                   for k in mod.REQUIRED]}
+        result = mod.validate_roundtrip(row)
+        self.assertEqual(set(result["missing_or_unwitnessed"]),
+                         set(mod.REQUIRED))
+        self.assertFalse(result["eligible_for_independent_referee"])
 
 if __name__=="__main__":
     unittest.main()

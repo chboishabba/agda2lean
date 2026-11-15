@@ -1,0 +1,29 @@
+{
+  "schema": "a2l-declaration-mapping-case-v1",
+  "module": "Identity",
+  "source_sha256": "8dba25148b761f439749275fa06d381864ae9945030d0fbc2e0a3ca0d81bcd1c",
+  "declarations": [
+    {
+      "agda": "Identity.identity",
+      "lean": "Identity.identity",
+      "registry_ids": [
+        "sort.set",
+        "pi.dependent",
+        "lambda.abs"
+      ],
+      "expected_project_dependencies": []
+    },
+    {
+      "agda": "Identity.identity-law",
+      "lean": "Identity.«identity-law»",
+      "registry_ids": [
+        "sort.set",
+        "pi.dependent",
+        "eq.intro"
+      ],
+      "expected_project_dependencies": [
+        "Identity.identity"
+      ]
+    }
+  ]
+}
