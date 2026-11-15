@@ -167,3 +167,100 @@ The registry and the paired handwritten reference theories are now
 available to structure that experiment. The actual source-bound
 cross-compiler \`M01–M07\` evidence remains **OPEN** until real
 translator and kernel checks exist.
+
+---
+
+## 16 November 2026 — declaration-level trace and original-source pilot
+
+The constructive dictionary now connects to actual **emitter metadata** through
+\`scripts/declaration_quality_trace.py\`. This is a deliberately narrow,
+read-only observer built on already-existing Agda2Lean artifacts, not a new
+source parser or translation engine. It consumes:
+
+1. An exact original Agda source file and a reviewed SHA256-bound case file.
+2. The emitted Lean file with existing \`-- Agda:\`,
+   \`-- Mapping:\`, and \`-- Direct dependencies:\` comments.
+3. The reviewed 51-rule machine registry (validated under the existing
+   anti-promotion contract).
+4. Optionally, the binary elaborated Agda CBOR, emitter diagnostics, and
+   the Lean 4 \`Manifest.lean\` type/value/axiom TSV to attach additional
+   artifact digests and checker-output observations.
+
+The output schema is \`a2l-declaration-quality-trace-v1\`, with source,
+case, registry and Lean output SHA256 digests; exact original and expected
+Lean names; **reviewed** construct IDs; observed emitter mapping mode;
+observed direct dependencies; optional Lean type/value/axiom manifest
+data; foundational conflicts and the union of required M03–M06/M10
+obligations. Statuses distinguish \`candidate-observation-only\`,
+\`reconstruction-observation-only\`,
+\`incomplete-emitter-annotation\`, and
+\`quarantined-foundational-conflict\`.
+
+The binding of a reviewed construct ID to an Agda source declaration is
+still a **human-reviewed expectation**. The emitter supplies original
+declaration names and direct dependencies from its existing typed Core
+pipeline, but the report has not independently reconstructed the
+elaborated Agda term or proved that the generated Lean type has the same
+meaning. Even a complete Lean manifest remains observation until the
+actual native kernel checks and independently verified logical-relation
+witnesses are tied to these bytes.
+
+### Source-pinned cases
+
+| Case | Source policy | Declarations | Checked against |
+|---|---|---:|---|
+| Identity | [identity_mapping_case.json](../fixtures/bidirectional/identity_mapping_case.json) | 2 | \`Identity.identity\`; \`Identity.identity-law\` with its essential direct dependency on \`identity\` |
+| JFixedPoint | [jfixedpoint_mapping_case.json](../fixtures/bidirectional/jfixedpoint_mapping_case.json) | 6 | \`unit-converges\`, \`fixed-0/1/2/100\`, \`all-196884\` and the **original** direct dependency pairs in \`comparison/receipts/jfixedpoint.project-dependencies.tsv\` |
+
+The Identity source is pinned to
+\`8dba25148b761f439749275fa06d381864ae9945030d0fbc2e0a3ca0d81bcd1c\`;
+JFixedPoint is pinned to
+\`f3ee60483de5a2086a75b74f1c9c2636cdee1542a79092d1477b92362c022436\`.
+These are **file-content** hashes, not Git commit IDs.
+
+For the Identity case, the existing \`agda-backend\` CI job now runs the
+real Agda 2.9 extraction and Lean emitter, then produces:
+
+\`\`\`sh
+python3 scripts/declaration_quality_trace.py \
+  --case fixtures/bidirectional/identity_mapping_case.json \
+  --source test/agda/Identity.agda \
+  --source-ir build/agda-ir/Identity/module.a2l.cbor \
+  --emitted build/agda-ir/Identity.generated.lean \
+  --diagnostics build/agda-ir/Identity.diagnostics.tsv \
+  --out build/agda-ir/Identity.foundation-observation.json
+\`\`\`
+
+The existing \`scripts/check-jfixedpoint.sh\` already typechecks its Agda
+source, regenerates Lean twice, builds under Lean 4.28, checks actual
+\`contract-all\` reduction, audits Lean axiom closure, and compares
+source dependencies. The new trace is called **after** those original
+checks, using their generated Lean file and manifest; it cannot replace
+or dilute them. The JFixedPoint report remains explicitly
+\`semantic_correspondence_proved=false\`: an original-direction
+successful check is not yet an Agda → Lean → Agda fixed point.
+
+### Testing and next proof cut
+
+\`\`\`sh
+python3 -m unittest discover -s scripts \
+  -p test_declaration_quality_trace.py -v
+\`\`\`
+
+The 14 new local tests passed on synthetic emitted fixtures with
+a synthetic completeness-preserving registry. They check both source
+hashes, the reviewed dependency boundary, Unicode Lean quoted names,
+conflicts, reconstruction, absent metadata, duplicate declarations,
+source mutation, malformed manifest, and fake proof flags. They are
+**not** compiler-quality benchmarks. The GitHub Actions gate is
+configured against the repository's real reviewed registry and
+compiler artifacts but has not yet produced an accepted receipt at this
+branch head.
+
+**Next maximum cut:** ingest genuine Agda/Lean checked *types* and
+independent kernel/proof objects into this same per-declaration trace.
+Build an independently audited \`M03\` witness for one original theorem
+that preserves \`Set\`-valued evidence, then \`M04/M05/M06\`, and only
+then instantiate the inverse/fixed-point obligations \`M01/M02/M07\`.
+No mapping-table count, source hash or command exit code may pay
+those mathematical gates.
