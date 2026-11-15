@@ -247,7 +247,7 @@ python3 -m unittest discover -s scripts \
   -p test_declaration_quality_trace.py -v
 ```
 
-The 14 new local tests passed on synthetic emitted fixtures with
+The 15 new local tests passed on synthetic emitted fixtures with
 a synthetic 51-row registry stand-in. They check both source
 hashes, the reviewed dependency boundary, Unicode Lean quoted names,
 conflicts, reconstruction, absent metadata, duplicate declarations,
