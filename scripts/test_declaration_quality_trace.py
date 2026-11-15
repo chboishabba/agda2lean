@@ -76,6 +76,8 @@ class DeclarationQualityTraceTests(unittest.TestCase):
                  if row["agda_declaration"] == "Identity.identity-law")
         self.assertEqual(r["lean_expected_constant"], "Identity.«identity-law»")
         self.assertEqual(r["observed_emitter_annotation"], "Reconstruct")
+        self.assertEqual(r["status"], "reconstruction-observation-only")
+        self.assertEqual(r["reviewed_project_dependencies"], ["Identity.identity"])
         self.assertEqual(r["observed_agda_direct_dependencies"],
                          ["Agda.Builtin.Equality._≡_", "Identity.identity"])
         self.assertEqual(r["lean_manifest_observation"]["type-direct"],
@@ -126,7 +128,16 @@ class DeclarationQualityTraceTests(unittest.TestCase):
                                 encoding="utf-8")
         result = self.run_trace()
         self.assertIsNone(result["declarations"][0]["observed_emitter_annotation"])
+        self.assertEqual(result["declarations"][0]["status"],
+                         "incomplete-emitter-annotation")
         self.assertFalse(result["semantic_correspondence_proved"])
+
+    def test_reviewed_dependency_must_be_visible_in_emitted_metadata(self):
+        self.emitted.write_text(EMITTED.replace(
+            "Identity.identity, Agda.Builtin.Equality._≡_", "Agda.Builtin.Equality._≡_"),
+            encoding="utf-8")
+        with self.assertRaisesRegex(trace.TraceError, "dependency boundary"):
+            self.run_trace()
 
     def test_malformed_manifest_fails_closed(self):
         self.manifest.write_text("Identity.identity\ttype-direct\n", encoding="utf-8")
